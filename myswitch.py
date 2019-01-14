@@ -8,7 +8,11 @@ from bill_pricing import Bill
 from best_offer import get_bests
 
 
+from flask_cors import CORS
+
+
 app = Flask(__name__)
+CORS(app)
 s3_resource = boto3.resource('s3')
 
 
