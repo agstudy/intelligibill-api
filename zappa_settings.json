@@ -5,8 +5,22 @@
         "profile_name": "default",
         "project_name": "zappa",
         "runtime": "python3.6",
+        "s3_bucket": "zappa-myswitch"
+    },
+    "api": {
+        "app_function": "myswitch.app",
+        "aws_region": "ap-southeast-2",
+        "profile_name": "default",
+        "project_name": "zappa",
+        "runtime": "python3.6",
         "s3_bucket": "zappa-myswitch",
-        "cors": true,
-        "method_header_types" :"Access-Control-Allow-Origin, Access-Control-Allow-Headers, and Access-Control-Allow-Methods"
+
+        "authorizer": {
+            "type": "cognito9051c58b_userpool_9051c58b",
+            "provider_arns": [
+                "arn:aws:cognito-idp:ap-southeast-2:825327973641:userpool/ap-southeast-2_jKeSuMP3P"
+            ]
+        }
     }
 }
+
