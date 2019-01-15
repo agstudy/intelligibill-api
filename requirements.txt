@@ -1,3 +1,5 @@
 lxml
 -e git+git@github.com:BruceMount/bill-parser.git@zappa#egg=pdf_parse
 flask_cors
+jose
+

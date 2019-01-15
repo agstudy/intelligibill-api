@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask
 from flask import jsonify, request
 import boto3
 from tempfile import NamedTemporaryFile
@@ -14,10 +14,13 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 s3_resource = boto3.resource('s3')
+dynamodb = boto3.resource('dynamodb')
+db = dynamodb.Table('myservice-dev')
 
 
 @app.route('/')
 def index():
+    print(request.headers.get('user_id'))
     return "Hello, world!", 200
 
 
@@ -34,7 +37,7 @@ def parse():
         bp.parse_bill()
         parsed=  bp.parser.json
         priced: dict = Bill(dict(parsed))()
-        res,nb_offers,status = get_bests(priced,"")
+        res,nb_offers,status = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
 
         print(f"bests are {bests}" )
