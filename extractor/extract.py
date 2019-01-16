@@ -11,7 +11,8 @@ import subprocess
 from lxml.etree import parse, HTMLParser
 
 
-
+import os
+local = False
 
 
 def get_subprocess_output(cmdline, redirect_stderr=True, display_output_on_exception=True, logger=None, **kwargs):
@@ -34,6 +35,13 @@ def get_subprocess_output(cmdline, redirect_stderr=True, display_output_on_excep
 LAMBDA_TASK_ROOT = os.environ.get('LAMBDA_TASK_ROOT', os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(LAMBDA_TASK_ROOT,'extractor', 'bin')
 LIB_DIR = os.path.join(LAMBDA_TASK_ROOT,'extractor', 'lib')
+LD_LIBRARY_PATH = os.path.join(LIB_DIR, 'pdftotext')
+
+if local :
+    BIN_DIR = ""
+    LIB_DIR = "/usr/lib"
+    LD_LIBRARY_PATH = None
+
 
 logging.basicConfig(format='%(asctime)-15s [%(name)s-%(process)d] %(levelname)s: %(message)s', level=logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -56,10 +64,13 @@ class Extractor:
 
     @staticmethod
     def pdf_to_text(document_path ):
-        with NamedTemporaryFile("wb",suffix='.txt', delete=False) as f:
+        with NamedTemporaryFile("wb",suffix='.txt') as f:
             text_path = f.name
         cmd_ = [Extractor.cmd('pdftotext'), '-layout', '-nopgbrk', '-eol', 'unix', document_path, text_path]
-        _get_subprocess_output(cmd_, shell=False, env=dict(LD_LIBRARY_PATH=os.path.join(LIB_DIR, 'pdftotext')))
+        if not LD_LIBRARY_PATH:
+            _get_subprocess_output(cmd_, shell=False)
+        else:
+            _get_subprocess_output(cmd_, shell=False, env=dict(LD_LIBRARY_PATH=LD_LIBRARY_PATH))
 
         with io.open(text_path, mode='r', encoding='utf-8', errors='ignore') as f:
             content= f.readlines()
@@ -114,18 +125,19 @@ class Extractor:
     def tet_convert(document_path):
         with NamedTemporaryFile(suffix='.xml', delete=False) as f:
             xml_path = f.name
-        cmd_ = [os.path.join(BIN_DIR, 'tet'), "-m", "page", "--docopt",
+        cmd_ = [Extractor.cmd('tet'), "-m", "page", "--docopt",
          "engines={noimage notextcolor} tetml={elements={nometadata}}",
          "--pageopt", "vectoranalysis={structures=tables}","-o",xml_path, document_path]
-        _get_subprocess_output(cmd_, shell=False, env=dict(LD_LIBRARY_PATH=os.path.join(LIB_DIR, 'pdftotext')))
+        _get_subprocess_output(cmd_, shell=False)
         Extractor.xml_data= parse(xml_path, HTMLParser()).getroot()
         Extractor.xml_= parse(xml_path).getroot()
         os.remove(xml_path)
 
     @staticmethod
     def extract(document_path):
-
-        pdf_text =  Extractor.pdf_to_text(document_path)
+        pdf_text= Extractor.txt_
+        if not Extractor.txt_:
+            pdf_text =  Extractor.pdf_to_text(document_path)
         if pdf_text :
             with NamedTemporaryFile("wb", delete=False) as shrunk:
                 shrunk_file_path = shrunk.name
@@ -144,6 +156,25 @@ class Extractor:
         finally:
             os.remove(document_path)
             return result
+
+
+    @staticmethod
+    def check_bill(document_path):
+
+        is_bill = False
+        try:
+            pdf_text =  Extractor.pdf_to_text(document_path)
+            if not pdf_text:
+                return False, "scanned bill"
+            else:
+                for x in pdf_text:
+                    if "nmi" in x.lower():
+                        is_bill = True
+                        break
+            return is_bill,x
+        except Exception as e:
+            print(e)
+            return False,"not a valid pdf"
 
 
 
