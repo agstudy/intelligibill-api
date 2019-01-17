@@ -8,7 +8,7 @@ from bill_pricing import Bill
 from best_offer import get_bests
 import decimal
 import json
-import os
+
 local = False
 
 
@@ -89,7 +89,7 @@ def parse():
             {"evaluated":nb_offers,
              "bests":bests,
              "bill":priced,
-             "message":""}),200
+             "message":"saving"}),200
 
 
 
