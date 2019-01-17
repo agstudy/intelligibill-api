@@ -82,6 +82,9 @@ def parse():
         bests=[ x for x in res if x["saving"]>0]
         if not local:
             populate_tracking(bests,priced)
+        if not len(bests):
+            return  bad_results("no bests")
+
         return  jsonify(
             {"evaluated":nb_offers,
              "bests":bests,
