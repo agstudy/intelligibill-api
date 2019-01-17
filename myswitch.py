@@ -52,7 +52,7 @@ def bad_results(message):
             { 'bests': [],
               'evaluated' : -1,
               'bill': {},
-              "error":message
+              "message":message
             }, 200)
 
 @app.route("/parse", methods=["POST"])
