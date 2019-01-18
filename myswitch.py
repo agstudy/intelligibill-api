@@ -9,6 +9,7 @@ from best_offer import get_bests
 import decimal
 import json
 from boto3.dynamodb.conditions import Key, Attr
+from botocore.exceptions import ClientError
 
 
 
@@ -48,11 +49,11 @@ def index():
     return "Hello, world!", 200
 
 
-def bad_results(message):
+def bad_results(message, priced = {}):
     return  jsonify(
             { 'bests': [],
               'evaluated' : -1,
-              'bill': {},
+              'bill': priced,
               "message":message
             }), 200
 
@@ -79,27 +80,48 @@ def parse():
         parsed = bp.parser.json
 
         priced: dict = Bill(dict(parsed))()
-        res,nb_offers,status = get_bests(priced,"",n=-1)
+        res,nb_offers,nb_retailers = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
-        if not local:
-            populate_tracking(bests,priced)
+        ## if not local:
+        ##    populate_tracking(bests,priced)
         if not len(bests):
-            return  bad_results("no saving")
+            return  bad_results("no saving",priced)
 
         return  jsonify(
             {"evaluated":nb_offers,
+             "nb_retailers":nb_retailers,
              "bests":bests,
              "bill":priced,
              "message":"saving"}),200
 
 
+
+
+# Helper class to convert a DynamoDB item to JSON.
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            if o % 1 > 0:
+                return float(o)
+            else:
+                return int(o)
+        return super(DecimalEncoder, self).default(o)
+
+
+
 @app.route("/history",methods=["GET"])
 def history():
 
-    id = "0186b45b-c273-4860-9bc0-70d0a70206b6"
-    response = tracking_table.query(
-        KeyConditionExpression=Key('customer_id').eq(id))
-    return  jsonify({"items":response['Items']}), 200
+    customer_id = sub()
+    try:
+        response = tracking_table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
+        item = response['Items']
+        result = json.dumps(item , indent=4, cls=DecimalEncoder)
+        return  result, 200
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
+
 
 
 @app.route("/check", methods=["POST"])
@@ -121,8 +143,6 @@ def check():
 
 # We only need this for local development.
 if __name__ == '__main__':
-    import os
-
 
     import yaml
     import os

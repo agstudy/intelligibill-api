@@ -171,6 +171,7 @@ class Extractor:
                     if "nmi" in x.lower():
                         is_bill = True
                         break
+            if not is_bill: return is_bill, "This pdf is not a bill"
             return is_bill,x
         except Exception as e:
             print(e)
