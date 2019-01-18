@@ -10,9 +10,9 @@ from shutil import copyfile
 import subprocess
 from lxml.etree import parse, HTMLParser
 
-
-import os
 local = False
+import os
+
 
 
 def get_subprocess_output(cmdline, redirect_stderr=True, display_output_on_exception=True, logger=None, **kwargs):

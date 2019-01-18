@@ -8,10 +8,11 @@ from bill_pricing import Bill
 from best_offer import get_bests
 import decimal
 import json
+from boto3.dynamodb.conditions import Key, Attr
+
+
 
 local = False
-
-
 from flask_cors import CORS
 from datetime import datetime
 
@@ -53,7 +54,7 @@ def bad_results(message):
               'evaluated' : -1,
               'bill': {},
               "message":message
-            }, 200)
+            }), 200
 
 @app.route("/parse", methods=["POST"])
 def parse():
@@ -74,7 +75,7 @@ def parse():
         bp = BillParser(xml_=Extractor.xml_,xml_data_ =Extractor.xml_data, txt_=Extractor.txt_,file_name=file_name)
         bp.parse_bill()
         if not bp.parser:
-            return bad_results("Problem to parse a bill")
+            return bad_results("no parsing")
         parsed = bp.parser.json
 
         priced: dict = Bill(dict(parsed))()
@@ -83,7 +84,7 @@ def parse():
         if not local:
             populate_tracking(bests,priced)
         if not len(bests):
-            return  bad_results("no bests")
+            return  bad_results("no saving")
 
         return  jsonify(
             {"evaluated":nb_offers,
@@ -92,6 +93,13 @@ def parse():
              "message":"saving"}),200
 
 
+@app.route("/history",methods=["GET"])
+def history():
+
+    id = "0186b45b-c273-4860-9bc0-70d0a70206b6"
+    response = tracking_table.query(
+        KeyConditionExpression=Key('customer_id').eq(id))
+    return  jsonify({"items":response['Items']}), 200
 
 
 @app.route("/check", methods=["POST"])
@@ -114,6 +122,16 @@ def check():
 # We only need this for local development.
 if __name__ == '__main__':
     import os
+
+
+    import yaml
+    import os
+    json_data = open('zappa_settings.yaml')
+    env_vars = yaml.load(json_data)['api']['environment_variables']
+    for key, val in env_vars.items():
+        os.environ[key] = val
+
+
     app.run(port =2003,load_dotenv=True)
 
 
