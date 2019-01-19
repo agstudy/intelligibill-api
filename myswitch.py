@@ -21,7 +21,7 @@ app = Flask(__name__)
 CORS(app)
 s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
-tracking_table = dynamodb.Table('tracking_table')
+tracker_table = dynamodb.Table('tracker_table')
 
 
 def sub():
@@ -44,7 +44,7 @@ def populate_tracking(bests,priced):
      }
      item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
      if customer_id:
-         tracking_table.put_item(Item=item)
+         tracker_table.put_item(Item=item)
 
 @app.route('/')
 def index():
@@ -85,8 +85,8 @@ def parse():
         priced: dict = Bill(dict(parsed))()
         res,nb_offers,nb_retailers = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
-        ## if not local:
-        ##    populate_tracking(bests,priced)
+        if not local:
+            populate_tracking(bests,priced)
         if not len(bests):
             return  bad_results("no saving",priced)
 
@@ -117,7 +117,7 @@ def history():
 
     customer_id = sub()
     try:
-        response = tracking_table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
+        response = tracker_table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
         item = response['Items']
         result = json.dumps(item , indent=4, cls=DecimalEncoder)
         return  result, 200
