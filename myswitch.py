@@ -27,6 +27,8 @@ tracking_table = dynamodb.Table('tracking_table')
 def sub():
     return request.environ["API_GATEWAY_AUTHORIZER"]["claims"]["sub"]
 
+def bill_id(priced):
+    return(f"""{priced["to_date"].replace("/","-")}_{priced["users_nmi"]}""")
 
 def populate_tracking(bests,priced):
 
@@ -35,6 +37,7 @@ def populate_tracking(bests,priced):
 
      item = {
        'customer_id': customer_id,
+       'to_date_bill_id':bill_id(priced),
        'spot_date': to_day,
        'bests': bests,
        'priced':priced
