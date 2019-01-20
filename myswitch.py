@@ -30,17 +30,28 @@ def sub():
 def bill_id(priced):
     return(f"""{priced["to_date"].replace("/","-")}_{priced["users_nmi"]}""")
 
-def populate_tracking(bests,priced):
+def populate_tracking(bests,priced,nb_offers):
 
      to_day = datetime.today().strftime("%Y-%m-%d")
      customer_id = sub()
+
+     saving = -1;
+     if len(bests) :
+          saving = bests[0]["saving"]
+     tracking = {
+         'avg_price' : priced["avg"],
+         'ranking'  :  f"{len(bests)}/{nb_offers}",
+         'saving'   : saving,
+         'to_date'  :priced["to_date"]
+     }
 
      item = {
        'customer_id': customer_id,
        'to_date_bill_id':bill_id(priced),
        'spot_date': to_day,
        'bests': bests,
-       'priced':priced
+       'priced':priced,
+        'tracking':tracking
      }
      item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
      if customer_id:
@@ -48,7 +59,6 @@ def populate_tracking(bests,priced):
 
 @app.route('/')
 def index():
-    print(request.headers.get('user_id'))
     return "Hello, world!", 200
 
 
@@ -85,10 +95,11 @@ def parse():
         priced: dict = Bill(dict(parsed))()
         res,nb_offers,nb_retailers = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
-        if not local:
-            populate_tracking(bests,priced)
         if not len(bests):
             return  bad_results("no saving",priced)
+
+        if not local:
+            populate_tracking(bests,priced,nb_offers)
 
         return  jsonify(
             {"evaluated":nb_offers,
@@ -112,14 +123,18 @@ class DecimalEncoder(json.JSONEncoder):
 
 
 
-@app.route("/history",methods=["GET"])
-def history():
-
+@app.route("/tracker",methods=["GET"])
+def tracker():
     customer_id = sub()
     try:
         response = tracker_table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
-        item = response['Items']
-        result = json.dumps(item , indent=4, cls=DecimalEncoder)
+        items = response['Items']
+        tracking = []
+        for x in items:
+            item = x.get("tracking", None)
+            if item:
+                tracking.append(item)
+        result = json.dumps(tracking , indent=4, cls=DecimalEncoder)
         return  result, 200
     except ClientError as e:
         print(e.response['Error']['Message'])
@@ -135,9 +150,6 @@ def check():
     with NamedTemporaryFile("wb",suffix=".pdf",delete=False) as out:
         out.write(pdf_data)
         is_bill, message =  Extractor.check_bill(out.name)
-        print("check ", file_name)
-        print(is_bill, message)
-        print(Extractor.txt_)
         return jsonify(
             {"is_bill":is_bill,
              "message":message}
