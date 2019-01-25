@@ -10,7 +10,9 @@ import decimal
 import json
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-
+from shutil import copyfile
+import uuid
+import os
 
 
 local = False
@@ -27,10 +29,16 @@ tracker_table = dynamodb.Table('tracker_table')
 def sub():
     return request.environ["API_GATEWAY_AUTHORIZER"]["claims"]["sub"]
 
+
+
 def bill_id(priced):
     return(f"""{priced["to_date"].replace("/","-")}_{priced["users_nmi"]}""")
 
-def populate_tracking(bests,priced,nb_offers):
+def bill_file_name(priced):
+    return f"private/{sub()}/{bill_id(priced)}.pdf"
+
+
+def populate_tracking(bests,priced,nb_offers,key_file):
 
      to_day = datetime.today().strftime("%Y-%m-%d")
      customer_id = sub()
@@ -47,6 +55,7 @@ def populate_tracking(bests,priced,nb_offers):
 
      item = {
        'customer_id': customer_id,
+       'source_bill':{'url' :key_file},
        'to_date_bill_id':bill_id(priced),
        'spot_date': to_day,
        'bests': bests,
@@ -76,6 +85,7 @@ def parse():
     pdf_data = file_obj.read()
     file_name = file_obj.filename
     print("trying to parse ...",file_name)
+    id = f"/tmp/{uuid.uuid1()}.pdf"
     with NamedTemporaryFile("wb",suffix=".pdf",delete=False) as out:
         out.write(pdf_data)
         is_bill, message =  Extractor.check_bill(out.name)
@@ -83,8 +93,7 @@ def parse():
             return  bad_results(message)
 
         out.write(pdf_data)
-        if not local:
-            s3_resource.Bucket("midummybucket").upload_file(Filename=out.name, Key=file_name)
+        copyfile(out.name, id)
         Extractor.process_pdf(out.name)
         bp = BillParser(xml_=Extractor.xml_,xml_data_ =Extractor.xml_data, txt_=Extractor.txt_,file_name=file_name)
         bp.parse_bill()
@@ -93,13 +102,18 @@ def parse():
         parsed = bp.parser.json
 
         priced: dict = Bill(dict(parsed))()
+        key_file = bill_file_name(priced)
         res,nb_offers,nb_retailers = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
+
+        if not local:
+            populate_tracking(bests,priced,nb_offers,key_file)
+            s3_resource.Bucket("myswitch-bills-bucket").upload_file(Filename=id, Key=key_file)
+            os.remove(id)
+
         if not len(bests):
             return  bad_results("no saving",priced)
 
-        if not local:
-            populate_tracking(bests,priced,nb_offers)
 
         return  jsonify(
             {"evaluated":nb_offers,
