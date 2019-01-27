@@ -95,6 +95,21 @@ def bill_source():
                      mimetype='image/jpg'
                )
 
+
+@app.route('/bill/pdf', methods=['GET'])
+def bill_pdf():
+    bill_url = request.args.get('bill_url')
+    key = f"private/{user_id()}/{bill_url}"
+    file_name = f"/tmp/{uuid.uuid1()}.pdf"
+    s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=file_name, Key=key)
+    with open(file_name, 'rb') as bites:
+        return send_file(
+                     io.BytesIO(bites.read()),
+                     attachment_filename=bill_url,
+                     mimetype='application/pdf'
+               )
+
+
 @app.route("/parse", methods=["POST"])
 def parse():
     file_obj = request.files.get("pdf")
