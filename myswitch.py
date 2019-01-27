@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, send_file
 from flask import jsonify, request
 import boto3
 from tempfile import NamedTemporaryFile
@@ -12,6 +12,7 @@ from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from shutil import copyfile
 import uuid
+import io
 import os
 
 
@@ -25,9 +26,11 @@ s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
 tracker_table = dynamodb.Table('tracker_table')
 
+BILLS_BUCKET = "myswitch-bills-bucket"
 
-def sub():
-    return request.environ["API_GATEWAY_AUTHORIZER"]["claims"]["sub"]
+def user_id():
+    return request.headers.get('user_id')
+
 
 
 
@@ -35,13 +38,13 @@ def bill_id(priced):
     return(f"""{priced["to_date"].replace("/","-")}_{priced["users_nmi"]}""")
 
 def bill_file_name(priced):
-    return f"private/{sub()}/{bill_id(priced)}.pdf"
+    return f"private/{user_id()}/{bill_id(priced)}.pdf"
 
 
 def populate_tracking(bests,priced,nb_offers,key_file):
 
      to_day = datetime.today().strftime("%Y-%m-%d")
-     customer_id = sub()
+     customer_id = user_id()
 
      saving = -1;
      if len(bests) :
@@ -66,10 +69,6 @@ def populate_tracking(bests,priced,nb_offers,key_file):
      if customer_id:
          tracker_table.put_item(Item=item)
 
-@app.route('/')
-def index():
-    return "Hello, world!", 200
-
 
 def bad_results(message, priced = {}):
     return  jsonify(
@@ -78,6 +77,23 @@ def bad_results(message, priced = {}):
               'bill': priced,
               "message":message
             }), 200
+
+
+@app.route('/bill/page', methods=['GET'])
+def bill_source():
+    bill_url = request.args.get('bill_url')
+    page = request.args.get('page')
+    key = f"private/{user_id()}/{bill_url}"
+    key_image = f"""{key.replace(".pdf","")}-page-{page}.jpg"""
+    file_name = f"/tmp/{uuid.uuid1()}.jpg"
+    print(f"key_image is {key_image}")
+    s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=file_name, Key=key_image)
+    with open(file_name, 'rb') as bites:
+        return send_file(
+                     io.BytesIO(bites.read()),
+                     attachment_filename=key_image,
+                     mimetype='image/jpg'
+               )
 
 @app.route("/parse", methods=["POST"])
 def parse():
@@ -102,13 +118,13 @@ def parse():
         parsed = bp.parser.json
 
         priced: dict = Bill(dict(parsed))()
-        key_file = bill_file_name(priced)
         res,nb_offers,nb_retailers = get_bests(priced,"",n=-1)
         bests=[ x for x in res if x["saving"]>0]
 
         if not local:
-            populate_tracking(bests,priced,nb_offers,key_file)
-            s3_resource.Bucket("myswitch-bills-bucket").upload_file(Filename=id, Key=key_file)
+            key_file = bill_file_name(priced)
+            populate_tracking(bests,priced,nb_offers, key_file = key_file)
+            s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
             os.remove(id)
 
         if not len(bests):
@@ -139,22 +155,24 @@ class DecimalEncoder(json.JSONEncoder):
 
 @app.route("/tracker",methods=["GET"])
 def tracker():
-    customer_id = sub()
+    customer_id = user_id()
     try:
         response = tracker_table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
         items = response['Items']
         tracking = []
         for x in items:
-            item = x.get("tracking", None)
+            item =x.get("tracking", None)
             if item:
+                if "source_bill" in x:
+                    bill_url = os.path.basename(x["source_bill"]["url"])
+                    nb_pages = len(x["source_bill"].get("images",[]))
+                    item.update({"nb_pages":nb_pages,"bill_url":bill_url})
                 tracking.append(item)
         result = json.dumps(tracking , indent=4, cls=DecimalEncoder)
         return  result, 200
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
-
-
 
 @app.route("/check", methods=["POST"])
 def check():
@@ -174,7 +192,6 @@ def check():
 if __name__ == '__main__':
 
     import yaml
-    import os
     json_data = open('zappa_settings.yaml')
     env_vars = yaml.load(json_data)['api']['environment_variables']
     for key, val in env_vars.items():
