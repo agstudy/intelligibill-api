@@ -76,7 +76,9 @@ class Extractor:
             content= f.readlines()
             if len(content) < 20:
                 return None
-            result =[x for x in content if not re.match(r'^\s*$', x)]
+            result =[x.replace(u'\xa0', u'').replace(u'\xad', u'') for x in content if not re.match(r'^\s*$', x)]
+
+
         Extractor.txt_ = result
         return result
 
@@ -97,7 +99,7 @@ class Extractor:
     @staticmethod
     def reduce_pages_red(input_file,pdf_text):
 
-        _text = [x.strip().lower().replace(" ","").replace(u'\xa0', u'')
+        _text = [x.strip().lower().replace(" ","").replace(u'\xa0', u'').replace(u'\xad ', u'')
                          for x in pdf_text if not re.match(r'^\s*$', x)]
 
         if "thisisthediscountthatyouwillreceiveonyourbill" in "".join(_text):

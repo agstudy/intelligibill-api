@@ -3,7 +3,7 @@ from flask import jsonify, request
 import boto3
 from tempfile import NamedTemporaryFile
 from extractor import Extractor
-from bill_parse.parser import BillParser
+from pdf_parse.parser import BillParser
 from bill_pricing import Bill
 from best_offer import get_bests
 import decimal
@@ -48,7 +48,7 @@ def populate_tracking(bests, priced, nb_offers, key_file):
     if len(bests):
         saving = bests[0]["saving"]
     tracking = {
-        'avg_price': priced["avg"],
+        'avg_daily_use': priced["avg_daily_use"],
         'ranking': f"{len(bests)}/{nb_offers}",
         'saving': saving,
         'to_date': priced["to_date"]
@@ -68,7 +68,6 @@ def populate_tracking(bests, priced, nb_offers, key_file):
         tracker_table.put_item(Item=item)
 
 
-# TODO: finish this
 def update_tracking(bests, priced, nb_offers):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     customer_id = user_id()
@@ -77,7 +76,7 @@ def update_tracking(bests, priced, nb_offers):
     if len(bests):
         saving = bests[0]["saving"]
     tracking = {
-        'avg_price': priced["avg"],
+        'avg_daily_use': priced["avg_daily_use"],
         'ranking': f"{len(bests)}/{nb_offers}",
         'saving': saving,
         'to_date': priced["to_date"]
@@ -248,6 +247,14 @@ def reprice():
          "bests": bests,
          "bill": priced,
          "message": "saving"}), 200
+
+
+@app.route("/offer/detail",methods=["GET"])
+def offer_detail():
+    offer_id = request.args.get('offer_id')
+    
+
+
 
 
 # We only need this for local development.
