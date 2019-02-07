@@ -82,7 +82,6 @@ class Extractor:
         Extractor.txt_ = result
         return result
 
-
     @staticmethod
     def reduce_pages_10(pdf_info,input_file):
 

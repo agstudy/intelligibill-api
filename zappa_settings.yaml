@@ -1,0 +1,20 @@
+dev:
+  app_function: intelligibill.app
+  aws_region: ap-southeast-2
+  profile_name: default
+  project_name: intelligibill
+  runtime: python3.6
+  s3_bucket: intelligibill-dev
+  domain: dev.intelligibill.com.au
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/9b2c68b0-6b46-4430-a3a7-2d53b4902ffd
+  authorizer:
+    type: COGNITO_USER_POOLS
+    provider_arns:
+    - arn:aws:cognito-idp:ap-southeast-2:825327973641:userpool/ap-southeast-2_IG69RgQQJ
+  context_header_mappings:
+    user_id: authorizer.claims.sub
+  iam_authorizer: yes
+  cors: yes
+  environment_variables:
+    local: a
+
