@@ -25,18 +25,20 @@ s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
 tracker_table = dynamodb.Table('bests_offers')
 
-
 BILLS_BUCKET = "myswitch-bills-bucket"
 
 
 def user_id():
     return request.headers.get('user_id')
 
+
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
+
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
+
 
 def populate_tracking(bests, priced, nb_offers, key_file):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -64,6 +66,7 @@ def populate_tracking(bests, priced, nb_offers, key_file):
     item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
     if customer_id:
         tracker_table.put_item(Item=item)
+
 
 def update_tracking(bests, priced, nb_offers):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -94,6 +97,7 @@ def update_tracking(bests, priced, nb_offers):
                                    ':spot_date': spot_date},
         ReturnValues="UPDATED_NEW")
 
+
 def bad_results(message, priced={}):
     return jsonify(
         {'bests': [],
@@ -118,16 +122,17 @@ def bill_source():
     bill_url = request.args.get('bill_url')
     page = request.args.get('page')
     key = f"private/{user_id()}/{bill_url}"
-    key_image = f"""{key.replace(".pdf","")}-page-{page}.jpg"""
-    file_name = f"/tmp/{uuid.uuid1()}.jpg"
+    key_image = f"""{key.replace(".pdf","")}-page-{page}.png"""
+    file_name = f"/tmp/{uuid.uuid1()}.png"
     print(f"key_image is {key_image}")
     s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=file_name, Key=key_image)
     with open(file_name, 'rb') as bites:
         return send_file(
             io.BytesIO(bites.read()),
             attachment_filename=key_image,
-            mimetype='image/jpg'
+            mimetype='image/png'
         )
+
 
 @app.route('/bill/pdf', methods=['GET'])
 def bill_pdf():
@@ -142,9 +147,11 @@ def bill_pdf():
             mimetype='application/pdf'
         )
 
+
 @app.route("/bests", methods=["POST"])
 def bests():
     file_obj = request.files.get("pdf")
+    is_business = request.form.get("is_business")
     pdf_data = file_obj.read()
     file_name = file_obj.filename
     print("trying to parse ...", file_name)
@@ -167,7 +174,7 @@ def bests():
             return bad_results("no parsing")
         parsed = bp.parser.json
         priced: dict = Bill(dict(parsed))()
-        res, nb_offers, nb_retailers = get_bests(priced, "", n=-1)
+        res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, is_business=is_business)
         bests = [x for x in res if x["saving"] > 0]
 
         if not local:
@@ -185,14 +192,14 @@ def bests():
              "bill": priced,
              "message": "saving"}), 200
 
+
 @app.route("/bests/single", methods=["POST"])
 def bests_single():
-
     params = request.get_json()
     priced = params.get("priced")
     retailer = params.get("retailer")
     print("trying to get all other retailer best offers ...")
-    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1,unique=False,single_retailer=retailer)
+    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
     bests = [x for x in res if x["saving"] > 0]
     if not len(bests):
         return bad_results("no saving", priced)
@@ -225,6 +232,7 @@ def nmis():
         print(e.response['Error']['Message'])
         raise e
 
+
 @app.route("/tracker", methods=["GET"])
 def tracker():
     nmi = request.args.get('nmi')
@@ -253,38 +261,36 @@ def tracker():
         print(e.response['Error']['Message'])
         raise e
 
+
 @app.route("/tracker/detail", methods=["GET"])
 def tracker_detail():
     nmi = request.args.get('nmi')
+    to_date = request.args.get('to_date')
+    bill_id = f"""{nmi}_{to_date.replace("/","-")}"""
     customer_id = user_id()
     try:
         response = tracker_table.query(
-            KeyConditionExpression='customer_id=:id and begins_with(bill_id_to_date , :nmi)',
+            KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
             ExpressionAttributeValues=
             {':id': customer_id,
-             ':nmi': nmi
+             ':bill_id': bill_id
              }
         )
         items = response['Items']
-        result = []
-        for x in items:
-            item = {}
-            bests = x.get("bests", None)
-            if bests:
-                item.update(bests)
-                item.update(x["priced"])
-            result.append(item)
-        result = json.dumps(result, indent=4, cls=DecimalEncoder)
-        return result, 200
+        if items:
+            x = items[0]
+            result = {"bests": x["bests"], "bill": x["priced"]}
+            result = json.dumps(result, indent=4, cls=DecimalEncoder)
+            return result, 200
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
+
 
 @app.route("/check", methods=["POST"])
 def check():
     file_obj = request.files.get("pdf")
     pdf_data = file_obj.read()
-    file_name = file_obj.filename
     with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
         out.write(pdf_data)
         is_bill, message = Extractor.check_bill(out.name)
@@ -293,12 +299,15 @@ def check():
              "message": message}
         )
 
+
 @app.route("/reprice", methods=["POST"])
 def reprice():
-    parsed = request.get_json()
+    params = request.get_json()
     print("trying to reprice ...")
+    parsed = params["parsed"]
     priced: dict = Bill(dict(parsed))()
-    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1)
+    is_business = params["is_business"]
+    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, is_business=is_business)
     bests = [x for x in res if x["saving"] > 0]
 
     if not local:
@@ -312,6 +321,7 @@ def reprice():
          "bill": priced,
          "message": "saving"}), 200
 
+
 # We only need this for local development.
 if __name__ == '__main__':
 
@@ -323,5 +333,3 @@ if __name__ == '__main__':
         os.environ[key] = val
 
     app.run(port=2003, load_dotenv=True)
-
-
