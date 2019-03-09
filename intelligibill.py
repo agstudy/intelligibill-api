@@ -302,10 +302,12 @@ def admin_bills():
              ExpressionAttributeNames={ "#state": "priced.region" },
         )
         items = response['Items']
+        result = []
         for x in items:
-            result = {"bests": x["bests"], "bill": x["priced"]}
-            result = json.dumps(result, indent=4, cls=DecimalEncoder)
-            return result, 200
+            item = {"bests": x["bests"], "bill": x["priced"]}
+            result.append(item)
+        result = json.dumps(result, indent=4, cls=DecimalEncoder)
+        return result, 200
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
