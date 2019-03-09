@@ -278,6 +278,30 @@ def tracker_detail():
         )
         items = response['Items']
         if items:
+            result = {"bests": x["bests"], "bill": x["priced"]}
+            result = json.dumps(result, indent=4, cls=DecimalEncoder)
+            return result, 200
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
+
+
+
+@app.route("/admin/bills", methods=["GET"])
+def admin_bills():
+    nmi = request.args.get('nmi')
+    region = request.args.get('region')
+    try:
+        response = tracker_table.scan(
+            FilterExpression='#state=:region or begins_with(bill_id_to_date , :nmi)',
+            ExpressionAttributeValues=
+            {':region': region,
+             ':nmi': nmi
+             },
+             ExpressionAttributeNames={ "#state": "priced.region" },
+        )
+        items = response['Items']
+        if items:
             x = items[0]
             result = {"bests": x["bests"], "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
