@@ -278,6 +278,7 @@ def tracker_detail():
         )
         items = response['Items']
         if items:
+            x = items[0]
             result = {"bests": x["bests"], "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200
@@ -301,8 +302,7 @@ def admin_bills():
              ExpressionAttributeNames={ "#state": "priced.region" },
         )
         items = response['Items']
-        if items:
-            x = items[0]
+        for x in items:
             result = {"bests": x["bests"], "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200
