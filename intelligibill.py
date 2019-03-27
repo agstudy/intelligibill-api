@@ -1,3 +1,4 @@
+
 from flask import Flask, send_file
 from flask import jsonify, request
 import boto3
@@ -14,6 +15,9 @@ from shutil import copyfile
 import uuid
 import io
 import os
+import requests
+from zappa.asynchronous import task
+from send_bill import send_ses_bill, send_feedback
 
 local = False
 from flask_cors import CORS
@@ -24,23 +28,42 @@ CORS(app)
 s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
 tracker_table = dynamodb.Table('bests_offers')
+cognito = boto3.client('cognito-idp')
 
 BILLS_BUCKET = "myswitch-bills-bucket"
+BAD_BILLS_BUCKET = "ib-bad-bills"
 
 
 def user_id():
     return request.headers.get('user_id')
 
+def coginto_user():
+
+    sub = user_id()
+    response = cognito.list_users(
+        UserPoolId='ap-southeast-2_IG69RgQQJ',
+        AttributesToGet=[
+            'email',
+        ],
+        Filter= f'sub="{sub}"'
+    )
+    user_ = response["Users"][0]
+    user_name = user_["Username"]
+    user_email = ""
+    for x in user_["Attributes"]:
+        if x["Name"] =="email":
+            user_email = x["Value"]
+    print(f"user name is {user_name} and user email is {user_email}")
+    return {"user_name":user_name,
+            "user_email":user_email}
 
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
-
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
 
-
-def populate_tracking(bests, priced, nb_offers, key_file):
+def populate_tracking(bests, priced, nb_offers,ranking, key_file):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     customer_id = user_id()
 
@@ -49,7 +72,8 @@ def populate_tracking(bests, priced, nb_offers, key_file):
         saving = bests[0]["saving"]
     tracking = {
         'avg_daily_use': priced["avg_daily_use"],
-        'ranking': f"{len(bests)}/{nb_offers}",
+        'ranking': ranking,
+        'evaluated': nb_offers,
         'saving': saving,
         'to_date': priced["to_date"]
     }
@@ -67,8 +91,7 @@ def populate_tracking(bests, priced, nb_offers, key_file):
     if customer_id:
         tracker_table.put_item(Item=item)
 
-
-def update_tracking(bests, priced, nb_offers):
+def update_tracking(bests, priced, nb_offers, ranking):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     customer_id = user_id()
 
@@ -77,7 +100,8 @@ def update_tracking(bests, priced, nb_offers):
         saving = bests[0]["saving"]
     tracking = {
         'avg_daily_use': priced["avg_daily_use"],
-        'ranking': f"{len(bests)}/{nb_offers}",
+        'ranking': ranking,
+        'evaluated': nb_offers,
         'saving': saving,
         'to_date': priced["to_date"]
     }
@@ -97,15 +121,19 @@ def update_tracking(bests, priced, nb_offers):
                                    ':spot_date': spot_date},
         ReturnValues="UPDATED_NEW")
 
+def bad_results(message, priced={}, file=None, file_name=None ):
 
-def bad_results(message, priced={}):
+    if file:
+        s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
+        user_ = coginto_user()
+        send_ses_bill(file,user_)
+
     return jsonify(
         {'bests': [],
          'evaluated': -1,
          'bill': priced,
          "message": message
          }), 200
-
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, o):
@@ -133,7 +161,6 @@ def bill_source():
             mimetype='image/png'
         )
 
-
 @app.route('/bill/pdf', methods=['GET'])
 def bill_pdf():
     bill_url = request.args.get('bill_url')
@@ -147,9 +174,18 @@ def bill_pdf():
             mimetype='application/pdf'
         )
 
+@task
+def send_to_miswitch():
+    file_obj = request.files.get("pdf")
+    pdf_data = file_obj.read()
+    files = {'pdf': pdf_data}
+    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
+    r = requests.post(url_miswitch , files=files)
 
 @app.route("/bests", methods=["POST"])
 def bests():
+    coginto_user()
+    send_to_miswitch()
     file_obj = request.files.get("pdf")
     is_business = request.form.get("is_business")
     pdf_data = file_obj.read()
@@ -158,11 +194,10 @@ def bests():
     id = f"/tmp/{uuid.uuid1()}.pdf"
     with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
         out.write(pdf_data)
+        copyfile(out.name, id)
         is_bill, message = Extractor.check_bill(out.name)
         if not is_bill:
-            return bad_results(message)
-        out.write(pdf_data)
-        copyfile(out.name, id)
+            return bad_results(message,file=id, file_name=file_name)
         Extractor.process_pdf(out.name)
         bp = BillParser(
             xml_=Extractor.xml_,
@@ -170,28 +205,43 @@ def bests():
             txt_=Extractor.txt_,
             file_name=file_name)
         bp.parse_bill()
-        if not bp.parser:
-            return bad_results("no parsing")
+        if not bp.parser or not bp.parser.json:
+            return bad_results("no parsing",file=id, file_name=file_name)
         parsed = bp.parser.json
         priced: dict = Bill(dict(parsed))()
-        res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, is_business=is_business)
-        bests = [x for x in res if x["saving"] > 0]
-
+        res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         if not local:
             key_file = bill_file_name(priced)
-            populate_tracking(bests, priced, nb_offers, key_file=key_file)
+            populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
             s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
             os.remove(id)
-        if not len(bests):
-            return bad_results("no saving", priced)
+        if not len(res):
+            return bad_results("no saving")
 
-        return jsonify(
-            {"evaluated": nb_offers,
+        result = {"evaluated": nb_offers,
+              "ranking": ranking,
              "nb_retailers": nb_retailers,
-             "bests": bests,
+             "bests": res,
              "bill": priced,
-             "message": "saving"}), 200
+             "message": "saving"}
+        result = json.dumps(result, indent=4)
+        return result, 200
 
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    print(request.form)
+    file_obj = request.files.get("pdf_file")
+    comment = request.form.get("comment")
+    pdf_data = file_obj.read()
+    id_file = f"/tmp/{uuid.uuid1()}.pdf"
+    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+        out.write(pdf_data)
+        copyfile(out.name, id_file)
+        user_= coginto_user()
+        send_feedback(id_file, comment,user_)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
 
 @app.route("/bests/single", methods=["POST"])
 def bests_single():
@@ -199,17 +249,18 @@ def bests_single():
     priced = params.get("priced")
     retailer = params.get("retailer")
     print("trying to get all other retailer best offers ...")
-    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
-    bests = [x for x in res if x["saving"] > 0]
-    if not len(bests):
+    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
+    if not len(res):
         return bad_results("no saving", priced)
-    return jsonify(
-        {"evaluated": nb_offers,
-         "nb_retailers": 1,
-         "bests": bests,
-         "bill": priced,
-         "message": "saving"}), 200
 
+    result = {"evaluated": nb_offers,
+      "ranking": ranking,
+     "nb_retailers": 1,
+     "bests": res,
+     "bill": priced,
+     "message": "saving"}
+    result = json.dumps(result, indent=4)
+    return result, 200
 
 @app.route("/nmis", methods=["GET"])
 def nmis():
@@ -231,7 +282,6 @@ def nmis():
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
-
 
 @app.route("/tracker", methods=["GET"])
 def tracker():
@@ -261,7 +311,6 @@ def tracker():
         print(e.response['Error']['Message'])
         raise e
 
-
 @app.route("/tracker/detail", methods=["GET"])
 def tracker_detail():
     nmi = request.args.get('nmi')
@@ -285,6 +334,38 @@ def tracker_detail():
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
+
+@app.route("/check", methods=["POST"])
+def check():
+    file_obj = request.files.get("pdf")
+    pdf_data = file_obj.read()
+    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+        out.write(pdf_data)
+        is_bill, message = Extractor.check_bill(out.name)
+        return jsonify(
+            {"is_bill": is_bill,
+             "message": message}
+        )
+
+@app.route("/reprice", methods=["POST"])
+def reprice():
+    params = request.get_json()
+    print("trying to reprice ...")
+    parsed = params["parsed"]
+    priced: dict = Bill(dict(parsed))()
+    is_business = params["is_business"]
+    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+    if not local:
+        update_tracking(res, priced, nb_offers, ranking)
+    if not len(res):
+        return bad_results("no saving", priced)
+    return jsonify(
+        {"evaluated": nb_offers,
+         "ranking"  : ranking,
+         "nb_retailers": nb_retailers,
+         "bests": res,
+         "bill": priced,
+         "message": "saving"}), 200
 
 
 
@@ -313,49 +394,14 @@ def admin_bills():
         raise e
 
 
-@app.route("/check", methods=["POST"])
-def check():
-    file_obj = request.files.get("pdf")
-    pdf_data = file_obj.read()
-    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
-        out.write(pdf_data)
-        is_bill, message = Extractor.check_bill(out.name)
-        return jsonify(
-            {"is_bill": is_bill,
-             "message": message}
-        )
-
-
-@app.route("/reprice", methods=["POST"])
-def reprice():
-    params = request.get_json()
-    print("trying to reprice ...")
-    parsed = params["parsed"]
-    priced: dict = Bill(dict(parsed))()
-    is_business = params["is_business"]
-    res, nb_offers, nb_retailers = get_bests(priced, "", n=-1, is_business=is_business)
-    bests = [x for x in res if x["saving"] > 0]
-
-    if not local:
-        update_tracking(bests, priced, nb_offers)
-    if not len(bests):
-        return bad_results("no saving", priced)
-    return jsonify(
-        {"evaluated": nb_offers,
-         "nb_retailers": nb_retailers,
-         "bests": bests,
-         "bill": priced,
-         "message": "saving"}), 200
-
-
 # We only need this for local development.
 if __name__ == '__main__':
 
-    import yaml
+    ## import yaml
 
     json_data = open('zappa_settings.yaml')
-    env_vars = yaml.load(json_data)['api']['environment_variables']
-    for key, val in env_vars.items():
-        os.environ[key] = val
+    ## env_vars = yaml.load(json_data)['api']['environment_variables']
+    ## for key, val in env_vars.items():
+    ##    os.environ[key] = val
 
     app.run(port=2003, load_dotenv=True)
