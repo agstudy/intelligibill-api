@@ -16,8 +16,11 @@ import uuid
 import io
 import os
 import requests
+import stripe
+
 from zappa.asynchronous import task
 from send_bill import send_ses_bill, send_feedback
+from zappa.asynchronous import task_sns
 
 local = False
 from flask_cors import CORS
@@ -144,6 +147,13 @@ class DecimalEncoder(json.JSONEncoder):
                 return int(o)
         return super(DecimalEncoder, self).default(o)
 
+@task
+def send_to_miswitch(file_obj):
+
+    files = {'pdf':file_obj.read()}
+    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
+    r = requests.post(url_miswitch , files=files)
+    print("reponse miswitch", r )
 
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
@@ -174,21 +184,13 @@ def bill_pdf():
             mimetype='application/pdf'
         )
 
-@task
-def send_to_miswitch():
-    file_obj = request.files.get("pdf")
-    pdf_data = file_obj.read()
-    files = {'pdf': pdf_data}
-    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-    r = requests.post(url_miswitch , files=files)
-
 @app.route("/bests", methods=["POST"])
 def bests():
     coginto_user()
-    send_to_miswitch()
     file_obj = request.files.get("pdf")
-    is_business = request.form.get("is_business")
+    send_to_miswitch(file_obj)
     pdf_data = file_obj.read()
+    is_business = request.form.get("is_business")
     file_name = file_obj.filename
     print("trying to parse ...", file_name)
     id = f"/tmp/{uuid.uuid1()}.pdf"
@@ -229,15 +231,21 @@ def bests():
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
-    print(request.form)
-    file_obj = request.files.get("pdf_file")
     comment = request.form.get("comment")
+    file_obj = request.files.get("pdf_file")
+    user_= coginto_user()
+    if not file_obj:
+        send_feedback( message=comment,user_= user_, bill_file=None)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
+
+
     pdf_data = file_obj.read()
     id_file = f"/tmp/{uuid.uuid1()}.pdf"
     with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
         out.write(pdf_data)
         copyfile(out.name, id_file)
-        user_= coginto_user()
         send_feedback(id_file, comment,user_)
         result = {"feedback": True}
         result = json.dumps(result, indent=4)
@@ -317,6 +325,7 @@ def tracker_detail():
     to_date = request.args.get('to_date')
     bill_id = f"""{nmi}_{to_date.replace("/","-")}"""
     customer_id = user_id()
+    print(f"customer_id is {customer_id} and to_date is {to_date} and bill_id is {bill_id}")
     try:
         response = tracker_table.query(
             KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
@@ -326,6 +335,7 @@ def tracker_detail():
              }
         )
         items = response['Items']
+        print(items)
         if items:
             x = items[0]
             result = {"bests": x["bests"], "bill": x["priced"]}
@@ -367,8 +377,6 @@ def reprice():
          "bill": priced,
          "message": "saving"}), 200
 
-
-
 @app.route("/admin/bills", methods=["GET"])
 def admin_bills():
     nmi = request.args.get('nmi')
@@ -392,6 +400,19 @@ def admin_bills():
     except ClientError as e:
         print(e.response['Error']['Message'])
         raise e
+
+@app.route("/payment/charge", methods=["POST"])
+def charge_client():
+    stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
+    token = request.form.get('stripeToken') # Using Flask
+    charge = stripe.Charge.create(
+        amount=30,
+        currency='aud',
+        description='intelligibill fee',
+        source=token,
+    )
+    result = json.dumps(charge, indent=4, cls=DecimalEncoder)
+    return result, 200
 
 
 # We only need this for local development.

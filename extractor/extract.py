@@ -119,6 +119,16 @@ class Extractor:
         if os.stat(input_file).st_size > 1000000:
             _get_subprocess_output([Extractor.cmd('ps2pdf'), input_file, output_file],shell=False)
             _get_subprocess_output([Extractor.cmd('cpdf'), "-clean", "-draft", input_file, "-o", output_file],shell=False)
+            if os.stat(output_file).st_size > 1000000:
+                output_file1 = "/tmp/toto.pdf"
+                _get_subprocess_output([Extractor.cmd('cpdf'), "-clean", "-draft", input_file, "-o", output_file1],shell=False)
+                _gs = os.path.join(BIN_DIR, "gs")
+                cmd2 = f"""{_gs} -o {output_file} -sDEVICE=pdfwrite -c "/setrgbcolor {{pop pop pop 0 setgray}} bind def"  -f {output_file1}"""
+                try:
+                    _get_subprocess_output(cmd2, shell=True)
+                    print(f"final pdf size is {os.stat(output_file).st_size}")
+                except:
+                    print('gs error')
         else:
             copyfile(input_file, output_file)
 
