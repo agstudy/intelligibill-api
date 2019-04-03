@@ -17,6 +17,13 @@ dev:
   cors: yes
   environment_variables:
     local: a
+  events:
+  - function: intelligibill.process_upload_miswitch
+    event_source:
+      arn: arn:aws:s3:::switch-markintell
+      events:
+      - s3:ObjectCreated:*
+
 
 
 api:

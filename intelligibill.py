@@ -17,10 +17,10 @@ import io
 import os
 import requests
 import stripe
+from urllib import parse
 
 from zappa.asynchronous import task
 from send_bill import send_ses_bill, send_feedback
-from zappa.asynchronous import task_sns
 
 local = False
 from flask_cors import CORS
@@ -34,6 +34,7 @@ tracker_table = dynamodb.Table('bests_offers')
 cognito = boto3.client('cognito-idp')
 
 BILLS_BUCKET = "myswitch-bills-bucket"
+SWITCH_MARKINTELL_BUCKET = "switch-markintell"
 BAD_BILLS_BUCKET = "ib-bad-bills"
 
 
@@ -155,6 +156,23 @@ def send_to_miswitch(file_obj):
     r = requests.post(url_miswitch , files=files)
     print("reponse miswitch", r )
 
+
+def process_upload_miswitch(event, context):
+    """
+    Process a file upload.
+    """
+    x = event['Records'][0]
+    bucket = x['s3']['bucket']['name']
+    key = x['s3']['object']['key']
+    key = parse.unquote_plus(key)
+    id = uuid.uuid1()
+    local_file = f"/tmp/{id}.pdf"
+    s3_resource.Bucket(bucket).download_file(Filename=local_file, Key=key)
+    file_bytes = open(local_file,'rb').read()
+    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
+    r = requests.post(url_miswitch , files={'pdf':file_bytes})
+    print("reponse miswitch", r )
+
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
     bill_url = request.args.get('bill_url')
@@ -188,7 +206,7 @@ def bill_pdf():
 def bests():
     coginto_user()
     file_obj = request.files.get("pdf")
-    send_to_miswitch(file_obj)
+    ## send_to_miswitch(file_obj)
     pdf_data = file_obj.read()
     is_business = request.form.get("is_business")
     file_name = file_obj.filename
@@ -216,6 +234,7 @@ def bests():
             key_file = bill_file_name(priced)
             populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
             s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
+            s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
             os.remove(id)
         if not len(res):
             return bad_results("no saving")
