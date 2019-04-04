@@ -22,7 +22,6 @@ from urllib import parse
 from zappa.asynchronous import task
 from send_bill import send_ses_bill, send_feedback
 
-local = False
 from flask_cors import CORS
 from datetime import datetime
 
@@ -148,15 +147,6 @@ class DecimalEncoder(json.JSONEncoder):
                 return int(o)
         return super(DecimalEncoder, self).default(o)
 
-@task
-def send_to_miswitch(file_obj):
-
-    files = {'pdf':file_obj.read()}
-    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-    r = requests.post(url_miswitch , files=files)
-    print("reponse miswitch", r )
-
-
 def process_upload_miswitch(event, context):
     """
     Process a file upload.
@@ -172,6 +162,34 @@ def process_upload_miswitch(event, context):
     url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
     r = requests.post(url_miswitch , files={'pdf':file_bytes})
     print("reponse miswitch", r )
+
+
+def annomyze_offers(priced, offers):
+    ## check if nmi is paid
+    nmi = priced["users_nmi"]
+    def is_paid(nmi):
+        return False
+    if not is_paid(nmi):
+        for i,x in enumerate(offers):
+            o = x["origin_offer"]
+            tariff = o ["tariff"]
+            index = i + 1
+            x["url"] = f"url_{index}"
+            o["url"] = f"url_{index}"
+            x["retailer"] = f"RETALIER{index}"
+            o["retailer"] = f"RETALIER{index}"
+            x["distributor"] = f"DISTRIBUTOR{index}"
+            o["distributor"] = f"DISTRIBUTOR{index}"
+            x["offer_id"] = f"OFFER_ID_{index}"
+            o["offer_id"] = f"OFFER_ID_{index}"
+            o["offer_name"] = f"OFFER_NAME_{index}"
+            if "eligibility" in o: del o["eligibility"]
+            if "eligibility" in tariff: del tariff["eligibility"]
+
+    return offers
+    pass
+
+
 
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
@@ -206,7 +224,6 @@ def bill_pdf():
 def bests():
     coginto_user()
     file_obj = request.files.get("pdf")
-    ## send_to_miswitch(file_obj)
     pdf_data = file_obj.read()
     is_business = request.form.get("is_business")
     file_name = file_obj.filename
@@ -230,43 +247,20 @@ def bests():
         parsed = bp.parser.json
         priced: dict = Bill(dict(parsed))()
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-        if not local:
-            key_file = bill_file_name(priced)
-            populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
-            s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
-            s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
-            os.remove(id)
+        key_file = bill_file_name(priced)
+        populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
+        s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
+        s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
+        os.remove(id)
         if not len(res):
             return bad_results("no saving")
-
+        res = annomyze_offers(priced, res)
         result = {"evaluated": nb_offers,
               "ranking": ranking,
              "nb_retailers": nb_retailers,
              "bests": res,
              "bill": priced,
              "message": "saving"}
-        result = json.dumps(result, indent=4)
-        return result, 200
-
-@app.route("/feedback", methods=["POST"])
-def feedback():
-    comment = request.form.get("comment")
-    file_obj = request.files.get("pdf_file")
-    user_= coginto_user()
-    if not file_obj:
-        send_feedback( message=comment,user_= user_, bill_file=None)
-        result = {"feedback": True}
-        result = json.dumps(result, indent=4)
-        return result, 200
-
-
-    pdf_data = file_obj.read()
-    id_file = f"/tmp/{uuid.uuid1()}.pdf"
-    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
-        out.write(pdf_data)
-        copyfile(out.name, id_file)
-        send_feedback(id_file, comment,user_)
-        result = {"feedback": True}
         result = json.dumps(result, indent=4)
         return result, 200
 
@@ -279,6 +273,7 @@ def bests_single():
     res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
     if not len(res):
         return bad_results("no saving", priced)
+    res = annomyze_offers(priced, res)
 
     result = {"evaluated": nb_offers,
       "ranking": ranking,
@@ -288,6 +283,27 @@ def bests_single():
      "message": "saving"}
     result = json.dumps(result, indent=4)
     return result, 200
+
+@app.route("/reprice", methods=["POST"])
+def reprice():
+    params = request.get_json()
+    print("trying to reprice ...")
+    parsed = params["parsed"]
+    priced: dict = Bill(dict(parsed))()
+    is_business = params["is_business"]
+    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+    update_tracking(res, priced, nb_offers, ranking)
+    if not len(res):
+        return bad_results("no saving", priced)
+
+    res = annomyze_offers(priced, res)
+    return jsonify(
+        {"evaluated": nb_offers,
+         "ranking"  : ranking,
+         "nb_retailers": nb_retailers,
+         "bests": res,
+         "bill": priced,
+         "message": "saving"}), 200
 
 @app.route("/nmis", methods=["GET"])
 def nmis():
@@ -376,25 +392,6 @@ def check():
              "message": message}
         )
 
-@app.route("/reprice", methods=["POST"])
-def reprice():
-    params = request.get_json()
-    print("trying to reprice ...")
-    parsed = params["parsed"]
-    priced: dict = Bill(dict(parsed))()
-    is_business = params["is_business"]
-    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-    if not local:
-        update_tracking(res, priced, nb_offers, ranking)
-    if not len(res):
-        return bad_results("no saving", priced)
-    return jsonify(
-        {"evaluated": nb_offers,
-         "ranking"  : ranking,
-         "nb_retailers": nb_retailers,
-         "bests": res,
-         "bill": priced,
-         "message": "saving"}), 200
 
 @app.route("/admin/bills", methods=["GET"])
 def admin_bills():
@@ -432,6 +429,29 @@ def charge_client():
     )
     result = json.dumps(charge, indent=4, cls=DecimalEncoder)
     return result, 200
+
+
+@app.route("/feedback", methods=["POST"])
+def feedback():
+    comment = request.form.get("comment")
+    file_obj = request.files.get("pdf_file")
+    user_= coginto_user()
+    if not file_obj:
+        send_feedback( message=comment,user_= user_, bill_file=None)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
+
+
+    pdf_data = file_obj.read()
+    id_file = f"/tmp/{uuid.uuid1()}.pdf"
+    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+        out.write(pdf_data)
+        copyfile(out.name, id_file)
+        send_feedback(id_file, comment,user_)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
 
 
 # We only need this for local development.
