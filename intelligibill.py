@@ -30,6 +30,7 @@ CORS(app)
 s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
 tracker_table = dynamodb.Table('bests_offers')
+users_table = dynamodb.Table('ib_users')
 cognito = boto3.client('cognito-idp')
 
 BILLS_BUCKET = "myswitch-bills-bucket"
@@ -93,6 +94,33 @@ def populate_tracking(bests, priced, nb_offers,ranking, key_file):
     item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
     if customer_id:
         tracker_table.put_item(Item=item)
+
+
+def populate_users(bill):
+
+    user_ = coginto_user()
+    item = {
+      'nmi' : bill['users_nmi'],
+      'address' : bill['address'],
+      'name': bill['name'],
+      'region': bill['region'],
+      'user_name': user_['user_name'],
+      'user_email': user_['user_email']
+    }
+    users_table.put_item(Item=item)
+
+def update_users(nmi,payment):
+
+    key = {"nmi": nmi}
+    payment = json.loads(payment, parse_float=decimal.Decimal)
+    spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+    users_table.update_item(
+        Key=key,
+        UpdateExpression="set payment=:payment, payment_date=:spot_date",
+        ExpressionAttributeValues={':payment': payment,
+                                   ':spot_date': spot_date},
+        ReturnValues="UPDATED_NEW")
+
 
 def update_tracking(bests, priced, nb_offers, ranking):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -163,7 +191,6 @@ def process_upload_miswitch(event, context):
     r = requests.post(url_miswitch , files={'pdf':file_bytes})
     print("reponse miswitch", r )
 
-
 def annomyze_offers(priced, offers):
     ## check if nmi is paid
     nmi = priced["users_nmi"]
@@ -171,25 +198,24 @@ def annomyze_offers(priced, offers):
         return False
     if not is_paid(nmi):
         for i,x in enumerate(offers):
-            o = x["origin_offer"]
-            tariff = o ["tariff"]
-            index = i + 1
-            x["url"] = f"url_{index}"
-            o["url"] = f"url_{index}"
-            x["retailer"] = f"RETALIER{index}"
-            o["retailer"] = f"RETALIER{index}"
-            x["distributor"] = f"DISTRIBUTOR{index}"
-            o["distributor"] = f"DISTRIBUTOR{index}"
-            x["offer_id"] = f"OFFER_ID_{index}"
-            o["offer_id"] = f"OFFER_ID_{index}"
-            o["offer_name"] = f"OFFER_NAME_{index}"
-            if "eligibility" in o: del o["eligibility"]
-            if "eligibility" in tariff: del tariff["eligibility"]
+            if x["saving"] > 100:
+                o = x["origin_offer"]
+                tariff = o ["tariff"]
+                index = i + 1
+                x["url"] = f"url_{index}"
+                o["url"] = f"url_{index}"
+                x["retailer"] = f"RETALIER{index}"
+                o["retailer"] = f"RETALIER{index}"
+                x["distributor"] = f"DISTRIBUTOR{index}"
+                o["distributor"] = f"DISTRIBUTOR{index}"
+                x["offer_id"] = f"OFFER_ID_{index}"
+                o["offer_id"] = f"OFFER_ID_{index}"
+                o["offer_name"] = f"OFFER_NAME_{index}"
+                if "eligibility" in o: del o["eligibility"]
+                if "eligibility" in tariff: del tariff["eligibility"]
 
     return offers
     pass
-
-
 
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
@@ -222,7 +248,6 @@ def bill_pdf():
 
 @app.route("/bests", methods=["POST"])
 def bests():
-    coginto_user()
     file_obj = request.files.get("pdf")
     pdf_data = file_obj.read()
     is_business = request.form.get("is_business")
@@ -249,6 +274,7 @@ def bests():
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         key_file = bill_file_name(priced)
         populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
+        populate_users(priced)
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
         s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
         os.remove(id)
@@ -305,26 +331,6 @@ def reprice():
          "bill": priced,
          "message": "saving"}), 200
 
-@app.route("/nmis", methods=["GET"])
-def nmis():
-    customer_id = user_id()
-    try:
-        response = tracker_table.query(
-            KeyConditionExpression=Key('customer_id').eq(customer_id),
-            ProjectionExpression="priced.users_nmi, priced.address"
-        )
-        items = response['Items']
-        keys = set()
-        result = []
-        for x in items:
-            if not x["priced"]["users_nmi"] in keys:
-                result.append(x["priced"])
-            keys.add(x["priced"]["users_nmi"])
-
-        return jsonify(result), 200
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        raise e
 
 @app.route("/tracker", methods=["GET"])
 def tracker():
@@ -420,16 +426,27 @@ def admin_bills():
 @app.route("/payment/charge", methods=["POST"])
 def charge_client():
     stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
-    token = request.form.get('stripeToken') # Using Flask
+    token = request.form.get('stripeToken')
+    nmi = request.form.get('nmi')
+    user_= coginto_user()
+
+    customer =stripe.Customer.create(
+        email= user_["user_email"],
+        source = token
+    )
+
     charge = stripe.Charge.create(
-        amount=30,
+        customer = customer.id,
+        amount=3000,
         currency='aud',
-        description='intelligibill fee',
+        description=f'intelligibill annual fee for NMI: {nmi}',
         source=token,
+        receipt_email= user_["user_email"],
+        metadata = {'nmi': nmi }
     )
     result = json.dumps(charge, indent=4, cls=DecimalEncoder)
+    update_users(nmi,result)
     return result, 200
-
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
@@ -452,6 +469,49 @@ def feedback():
         result = {"feedback": True}
         result = json.dumps(result, indent=4)
         return result, 200
+
+
+@app.route("/current_nmi", methods=["GET"])
+def current_nmi():
+    customer_id = user_id()
+    try:
+        response = tracker_table.query(
+            KeyConditionExpression=Key('customer_id').eq(customer_id),
+            ProjectionExpression="priced.users_nmi, priced.address, spot_date"
+        )
+        items = response['Items']
+        spot_date_MAX=0
+        current = None
+        for x in items:
+            spot_date = datetime.datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
+            if spot_date > spot_date_MAX:
+                spot_date_MAX = spot_date
+                current = x
+        return jsonify(current), 200
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
+
+@app.route("/nmis", methods=["GET"])
+def nmis():
+    customer_id = user_id()
+    try:
+        response = tracker_table.query(
+            KeyConditionExpression=Key('customer_id').eq(customer_id),
+            ProjectionExpression="priced.users_nmi, priced.address"
+        )
+        items = response['Items']
+        keys = set()
+        result = []
+        for x in items:
+            if not x["priced"]["users_nmi"] in keys:
+                result.append(x["priced"])
+            keys.add(x["priced"]["users_nmi"])
+
+        return jsonify(result), 200
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
 
 
 # We only need this for local development.
