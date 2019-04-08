@@ -95,31 +95,32 @@ def populate_tracking(bests, priced, nb_offers,ranking, key_file):
     if customer_id:
         tracker_table.put_item(Item=item)
 
-
-def populate_users(bill):
+def populate_users(bill,  payment, customer_id, charge_id):
 
     user_ = coginto_user()
+    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+
     item = {
       'nmi' : bill['users_nmi'],
       'address' : bill['address'],
       'name': bill['name'],
       'region': bill['region'],
       'user_name': user_['user_name'],
-      'user_email': user_['user_email']
+      'user_email': user_['user_email'],
+      'creation_date': creation_date,
+      'payment': payment,
+      'customer_id' : customer_id,
+      'charge_id' : charge_id
     }
     users_table.put_item(Item=item)
 
-def update_users(nmi,payment):
+def paid_customer(nmi):
 
-    key = {"nmi": nmi}
-    payment = json.loads(payment, parse_float=decimal.Decimal)
-    spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    users_table.update_item(
-        Key=key,
-        UpdateExpression="set payment=:payment, payment_date=:spot_date",
-        ExpressionAttributeValues={':payment': payment,
-                                   ':spot_date': spot_date},
-        ReturnValues="UPDATED_NEW")
+    response = users_table.get_item(Key= {'nmi':nmi})
+    if 'Item' in response:
+        charge_id = response['Item']["charge_id"]
+        charge = stripe.Charge.retrieve(charge_id)
+        return charge["paid"]
 
 
 def update_tracking(bests, priced, nb_offers, ranking):
@@ -192,11 +193,8 @@ def process_upload_miswitch(event, context):
     print("reponse miswitch", r )
 
 def annomyze_offers(priced, offers):
-    ## check if nmi is paid
     nmi = priced["users_nmi"]
-    def is_paid(nmi):
-        return False
-    if not is_paid(nmi):
+    if not paid_customer(nmi):
         for i,x in enumerate(offers):
             if x["saving"] > 100:
                 o = x["origin_offer"]
@@ -274,7 +272,6 @@ def bests():
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         key_file = bill_file_name(priced)
         populate_tracking(res, priced, nb_offers, ranking, key_file=key_file)
-        populate_users(priced)
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
         s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
         os.remove(id)
@@ -330,7 +327,6 @@ def reprice():
          "bests": res,
          "bill": priced,
          "message": "saving"}), 200
-
 
 @app.route("/tracker", methods=["GET"])
 def tracker():
@@ -398,7 +394,6 @@ def check():
              "message": message}
         )
 
-
 @app.route("/admin/bills", methods=["GET"])
 def admin_bills():
     nmi = request.args.get('nmi')
@@ -426,27 +421,28 @@ def admin_bills():
 @app.route("/payment/charge", methods=["POST"])
 def charge_client():
     stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
-    token = request.form.get('stripeToken')
-    nmi = request.form.get('nmi')
+    params = request.get_json()
+    token = params.get("stripeToken")
+    nmi = params.get("nmi")
+    bill = params.get("bill")
     user_= coginto_user()
-
     customer =stripe.Customer.create(
         email= user_["user_email"],
         source = token
     )
-
+    stripe_cus = customer.id
     charge = stripe.Charge.create(
-        customer = customer.id,
-        amount=3000,
-        currency='aud',
-        description=f'intelligibill annual fee for NMI: {nmi}',
-        source=token,
+        customer= stripe_cus,
+        amount= 3000,
+        currency= 'aud',
+        description= f'intelligibill annual fee for NMI: {nmi}',
         receipt_email= user_["user_email"],
-        metadata = {'nmi': nmi }
+        metadata= {"nmi" : nmi}
     )
-    result = json.dumps(charge, indent=4, cls=DecimalEncoder)
-    update_users(nmi,result)
-    return result, 200
+
+    payment = json.loads(json.dumps(charge), parse_float=decimal.Decimal)
+    populate_users(bill, payment, stripe_cus, charge.id)
+    return jsonify(charge), 200
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
@@ -469,7 +465,6 @@ def feedback():
         result = {"feedback": True}
         result = json.dumps(result, indent=4)
         return result, 200
-
 
 @app.route("/current_nmi", methods=["GET"])
 def current_nmi():
