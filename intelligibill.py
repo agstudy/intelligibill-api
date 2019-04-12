@@ -19,11 +19,12 @@ import requests
 import stripe
 from urllib import parse
 
-from zappa.asynchronous import task
 from send_bill import send_ses_bill, send_feedback
 
 from flask_cors import CORS
 from datetime import datetime
+
+stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
 
 app = Flask(__name__)
 CORS(app)
@@ -123,6 +124,7 @@ def paid_customer(nmi):
         return charge["paid"]
 
 
+
 def update_tracking(bests, priced, nb_offers, ranking):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     customer_id = user_id()
@@ -189,7 +191,7 @@ def process_upload_miswitch(event, context):
     s3_resource.Bucket(bucket).download_file(Filename=local_file, Key=key)
     file_bytes = open(local_file,'rb').read()
     url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-    r = requests.post(url_miswitch , files={'pdf':file_bytes})
+    r = requests.post(url_miswitch , files={'pdf':file_bytes}, data = {"source":"IB"})
     print("reponse miswitch", r )
 
 def annomyze_offers(priced, offers):
@@ -278,8 +280,9 @@ def bests():
         if not len(res):
             return bad_results("no saving")
         res = annomyze_offers(priced, res)
-        result = {"evaluated": nb_offers,
-              "ranking": ranking,
+        result = {
+            "evaluated": nb_offers,
+            "ranking": ranking,
              "nb_retailers": nb_retailers,
              "bests": res,
              "bill": priced,
@@ -307,7 +310,7 @@ def bests_single():
     result = json.dumps(result, indent=4)
     return result, 200
 
-@app.route("/reprice", methods=["POST"])
+@app.route("/bests/reprice", methods=["POST"])
 def reprice():
     params = request.get_json()
     print("trying to reprice ...")
@@ -375,7 +378,8 @@ def tracker_detail():
         print(items)
         if items:
             x = items[0]
-            result = {"bests": x["bests"], "bill": x["priced"]}
+            bests = annomyze_offers(x["priced"], x["bests"])
+            result = {"bests": bests, "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200
     except ClientError as e:
@@ -420,7 +424,6 @@ def admin_bills():
 
 @app.route("/payment/charge", methods=["POST"])
 def charge_client():
-    stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
     params = request.get_json()
     token = params.get("stripeToken")
     nmi = params.get("nmi")
@@ -432,17 +435,30 @@ def charge_client():
     )
     stripe_cus = customer.id
     charge = stripe.Charge.create(
-        customer= stripe_cus,
-        amount= 3000,
-        currency= 'aud',
-        description= f'intelligibill annual fee for NMI: {nmi}',
-        receipt_email= user_["user_email"],
-        metadata= {"nmi" : nmi}
+        customer = stripe_cus,
+        amount = 3000,
+        currency = 'aud',
+        description = f'intelligibill annual fee for NMI: {nmi}',
+        receipt_email = user_["user_email"],
+        metadata = {"nmi" : nmi}
     )
 
     payment = json.loads(json.dumps(charge), parse_float=decimal.Decimal)
     populate_users(bill, payment, stripe_cus, charge.id)
-    return jsonify(charge), 200
+    return jsonify(charge) , 200
+
+@app.route('/payment/is_paid', methods=['GET'])
+def is_paid():
+    nmi = request.args.get('nmi')
+    is_paid = paid_customer(nmi)
+    if not is_paid: is_paid = False
+    return jsonify({
+        "amount" : 30,
+        "threshold" : 100,
+        "is_paid": is_paid
+
+    }), 200
+
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
