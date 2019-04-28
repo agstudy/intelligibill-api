@@ -17,7 +17,10 @@ dev:
   iam_authorizer: yes
   cors: yes
   environment_variables:
-    local: a
+    users_paid_table: paid_users
+    users_bill_table: bill_users
+    bests_offers_table: bests_offers
+    stripe.api_key: sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss
   events:
   - function: intelligibill.process_upload_miswitch
     event_source:
@@ -45,7 +48,9 @@ api:
   iam_authorizer: yes
   cors: yes
   environment_variables:
-    local: a
-
+    users_paid_table: paid_users
+    users_bill_table: bill_users
+    bests_offers_table: bests_offers
+    stripe.api_key: sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss
 
 

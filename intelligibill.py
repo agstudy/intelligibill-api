@@ -1,4 +1,3 @@
-
 from flask import Flask, send_file
 from flask import jsonify, request
 import boto3
@@ -23,52 +22,59 @@ from send_bill import send_ses_bill, send_feedback
 
 from flask_cors import CORS
 from datetime import datetime
+from decimal import Decimal
 
-stripe.api_key = "sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss"
+stripe.api_key = os.environ.get("stripe.api_key")
 
 app = Flask(__name__)
 CORS(app)
+cognito = boto3.client('cognito-idp')
 s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
-tracker_table = dynamodb.Table('bests_offers')
-users_table = dynamodb.Table('ib_users')
-cognito = boto3.client('cognito-idp')
+best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
+users_paid_table = dynamodb.Table(os.environ.get('users_paid_table'))
+users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 
 BILLS_BUCKET = "myswitch-bills-bucket"
 SWITCH_MARKINTELL_BUCKET = "switch-markintell"
 BAD_BILLS_BUCKET = "ib-bad-bills"
+AMOUNT = 3000
 
 
 def user_id():
     return request.headers.get('user_id')
 
-def coginto_user():
 
-    sub = user_id()
+def coginto_user(sub=None):
+    if not sub:
+        sub = user_id()
     response = cognito.list_users(
         UserPoolId='ap-southeast-2_IG69RgQQJ',
         AttributesToGet=[
             'email',
         ],
-        Filter= f'sub="{sub}"'
+        Filter=f'sub="{sub}"'
     )
     user_ = response["Users"][0]
     user_name = user_["Username"]
     user_email = ""
     for x in user_["Attributes"]:
-        if x["Name"] =="email":
+        if x["Name"] == "email":
             user_email = x["Value"]
     print(f"user name is {user_name} and user email is {user_email}")
-    return {"user_name":user_name,
-            "user_email":user_email}
+    return {"user_name": user_name,
+            "user_email": user_email}
+
 
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
+
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
 
-def populate_tracking(bests, priced, nb_offers,ranking, key_file):
+
+def populate_tracking(bests, priced, nb_offers, ranking, key_file):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     customer_id = user_id()
 
@@ -94,36 +100,99 @@ def populate_tracking(bests, priced, nb_offers,ranking, key_file):
     }
     item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
     if customer_id:
-        tracker_table.put_item(Item=item)
+        best_offers_table.put_item(Item=item)
 
-def populate_users(bill,  payment, customer_id, charge_id):
 
+def populate_users(bill, payment, customer_id, charge_id):
     user_ = coginto_user()
     creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
 
     item = {
-      'nmi' : bill['users_nmi'],
-      'address' : bill['address'],
-      'name': bill['name'],
-      'region': bill['region'],
-      'user_name': user_['user_name'],
-      'user_email': user_['user_email'],
-      'creation_date': creation_date,
-      'payment': payment,
-      'customer_id' : customer_id,
-      'charge_id' : charge_id
+        'nmi': bill['users_nmi'],
+        'address': bill['address'],
+        'name': bill['name'],
+        'region': bill['region'],
+        'user_name': user_['user_name'],
+        'user_email': user_['user_email'],
+        'creation_date': creation_date,
+        'payment': payment,
+        'customer_id': customer_id,
+        'charge_id': charge_id
     }
-    users_table.put_item(Item=item)
+    users_paid_table.put_item(Item=item)
+
+
+def populate_paid_users(
+        nmi,
+        payment,
+        customer_id=None,
+        charge_id= None,
+        coupon = None):
+    user_ = coginto_user()
+    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+
+    item = {
+        'nmi': nmi,
+        'user_name': user_['user_name'],
+        'user_email': user_['user_email'],
+        'creation_date': creation_date,
+        'payment': payment,
+    }
+    if customer_id:
+        item.update(
+            {
+                'customer_id': customer_id,
+                'charge_id': charge_id
+            }
+        )
+    if coupon:
+        item.update(
+            {
+                'coupon': coupon,
+            })
+    users_paid_table.put_item(Item=item)
+
+
+def populate_bill_users(bill):
+    user_ = coginto_user()
+    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+
+    item = {
+        "bill_id": bill["users_nmi"],
+        "creation_date": creation_date,
+        "to_date": bill["to_date"],
+        "user_name": user_["user_name"],
+        "user_email": user_["user_email"],
+        "address": bill["address"],
+        "bill_user_name": bill["name"],
+        "region": bill["region"]
+    }
+
+    users_bill_table.put_item(Item=item)
 
 def paid_customer(nmi):
 
-    response = users_table.get_item(Key= {'nmi':nmi})
+    response = users_paid_table.get_item(Key={'nmi': nmi})
     if 'Item' in response:
-        charge_id = response['Item']["charge_id"]
-        charge = stripe.Charge.retrieve(charge_id)
-        return charge["paid"]
-
-
+        item= response["Item"]
+        if "charge_id" in item:
+            charge_id = response["Item"]["charge_id"]
+            charge = stripe.Charge.retrieve(charge_id)
+            return {
+                "is_paid": charge["paid"],
+                "receipt": charge["receipt_url"],
+                "amount": charge["amount"] / 100,
+                "payment_date": item["creation_date"]
+            }
+        elif "coupon" in item:
+            payment = item["payment"]
+            return {
+                "is_paid": payment["paid"],
+                "receipt": payment["receipt_url"],
+                "amount": float(payment["amount"]),
+                "payment_date": item["creation_date"]
+            }
+    return {"is_paid": False}
 
 def update_tracking(bests, priced, nb_offers, ranking):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -146,7 +215,7 @@ def update_tracking(bests, priced, nb_offers, ranking):
     key = {
         "bill_id_to_date": bill_id(priced),
         "customer_id": customer_id}
-    tracker_table.update_item(
+    best_offers_table.update_item(
         Key=key,
         UpdateExpression="set priced=:priced,tracking=:tracking,best=:bests,spot_date=:spot_date",
         ExpressionAttributeValues={':priced': priced,
@@ -155,12 +224,11 @@ def update_tracking(bests, priced, nb_offers, ranking):
                                    ':spot_date': spot_date},
         ReturnValues="UPDATED_NEW")
 
-def bad_results(message, priced={}, file=None, file_name=None ):
-
+def bad_results(message, priced={}, file=None, file_name=None):
     if file:
         s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
         user_ = coginto_user()
-        send_ses_bill(file,user_)
+        send_ses_bill(file, user_)
 
     return jsonify(
         {'bests': [],
@@ -189,18 +257,28 @@ def process_upload_miswitch(event, context):
     id = uuid.uuid1()
     local_file = f"/tmp/{id}.pdf"
     s3_resource.Bucket(bucket).download_file(Filename=local_file, Key=key)
-    file_bytes = open(local_file,'rb').read()
+    print(f"key is {key}")
+    sub = key.split('/')[1]
+    print(f"sub is {sub}")
+    user_ib = coginto_user(sub)
+    print(f"user_ib is {user_ib}")
+    file_bytes = open(local_file, 'rb').read()
     url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-    r = requests.post(url_miswitch , files={'pdf':file_bytes}, data = {"source":"IB"})
-    print("reponse miswitch", r )
+    r = requests.post(url_miswitch, files={'pdf': file_bytes},
+                      data={"source": "IB",
+                            "file_name": "_".join(key.split("/")[1:]),
+                            "user_email": user_ib["user_email"],
+                            "user_name": user_ib["user_name"]
+                            })
+    print("reponse miswitch", r)
 
 def annomyze_offers(priced, offers):
     nmi = priced["users_nmi"]
-    if not paid_customer(nmi):
-        for i,x in enumerate(offers):
+    if not paid_customer(nmi)["is_paid"]:
+        for i, x in enumerate(offers):
             if x["saving"] > 100:
                 o = x["origin_offer"]
-                tariff = o ["tariff"]
+                tariff = o["tariff"]
                 index = i + 1
                 x["url"] = f"url_{index}"
                 o["url"] = f"url_{index}"
@@ -211,6 +289,9 @@ def annomyze_offers(priced, offers):
                 x["offer_id"] = f"OFFER_ID_{index}"
                 o["offer_id"] = f"OFFER_ID_{index}"
                 o["offer_name"] = f"OFFER_NAME_{index}"
+                o["retailer_url"] = f"RETALIER_URL{index}"
+                o["retailer_phone"] = f"PHONE{index}"
+
                 if "eligibility" in o: del o["eligibility"]
                 if "eligibility" in tariff: del tariff["eligibility"]
 
@@ -259,7 +340,7 @@ def bests():
         copyfile(out.name, id)
         is_bill, message = Extractor.check_bill(out.name)
         if not is_bill:
-            return bad_results(message,file=id, file_name=file_name)
+            return bad_results(message, file=id, file_name=file_name)
         Extractor.process_pdf(out.name)
         bp = BillParser(
             xml_=Extractor.xml_,
@@ -268,7 +349,7 @@ def bests():
             file_name=file_name)
         bp.parse_bill()
         if not bp.parser or not bp.parser.json:
-            return bad_results("no parsing",file=id, file_name=file_name)
+            return bad_results("no parsing", file=id, file_name=file_name)
         parsed = bp.parser.json
         priced: dict = Bill(dict(parsed))()
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
@@ -280,13 +361,14 @@ def bests():
         if not len(res):
             return bad_results("no saving")
         res = annomyze_offers(priced, res)
+        populate_bill_users(priced)
         result = {
             "evaluated": nb_offers,
             "ranking": ranking,
-             "nb_retailers": nb_retailers,
-             "bests": res,
-             "bill": priced,
-             "message": "saving"}
+            "nb_retailers": nb_retailers,
+            "bests": res,
+            "bill": priced,
+            "message": "saving"}
         result = json.dumps(result, indent=4)
         return result, 200
 
@@ -302,11 +384,11 @@ def bests_single():
     res = annomyze_offers(priced, res)
 
     result = {"evaluated": nb_offers,
-      "ranking": ranking,
-     "nb_retailers": 1,
-     "bests": res,
-     "bill": priced,
-     "message": "saving"}
+              "ranking": ranking,
+              "nb_retailers": 1,
+              "bests": res,
+              "bill": priced,
+              "message": "saving"}
     result = json.dumps(result, indent=4)
     return result, 200
 
@@ -325,7 +407,7 @@ def reprice():
     res = annomyze_offers(priced, res)
     return jsonify(
         {"evaluated": nb_offers,
-         "ranking"  : ranking,
+         "ranking": ranking,
          "nb_retailers": nb_retailers,
          "bests": res,
          "bill": priced,
@@ -336,7 +418,7 @@ def tracker():
     nmi = request.args.get('nmi')
     customer_id = user_id()
     try:
-        response = tracker_table.query(
+        response = best_offers_table.query(
             KeyConditionExpression='customer_id=:id and begins_with(bill_id_to_date , :nmi)',
             ExpressionAttributeValues=
             {':id': customer_id,
@@ -367,7 +449,7 @@ def tracker_detail():
     customer_id = user_id()
     print(f"customer_id is {customer_id} and to_date is {to_date} and bill_id is {bill_id}")
     try:
-        response = tracker_table.query(
+        response = best_offers_table.query(
             KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
             ExpressionAttributeValues=
             {':id': customer_id,
@@ -403,13 +485,13 @@ def admin_bills():
     nmi = request.args.get('nmi')
     region = request.args.get('region')
     try:
-        response = tracker_table.scan(
+        response = best_offers_table.scan(
             FilterExpression='#state=:region or begins_with(bill_id_to_date , :nmi)',
             ExpressionAttributeValues=
             {':region': region,
              ':nmi': nmi
              },
-             ExpressionAttributeNames={ "#state": "priced.region" },
+            ExpressionAttributeNames={"#state": "priced.region"},
         )
         items = response['Items']
         result = []
@@ -427,74 +509,115 @@ def charge_client():
     params = request.get_json()
     token = params.get("stripeToken")
     nmi = params.get("nmi")
-    bill = params.get("bill")
-    user_= coginto_user()
-    customer =stripe.Customer.create(
-        email= user_["user_email"],
-        source = token
+    user_ = coginto_user()
+    customer = stripe.Customer.create(
+        email=user_["user_email"],
+        source=token
     )
     stripe_cus = customer.id
     charge = stripe.Charge.create(
-        customer = stripe_cus,
-        amount = 3000,
-        currency = 'aud',
-        description = f'intelligibill annual fee for NMI: {nmi}',
-        receipt_email = user_["user_email"],
-        metadata = {"nmi" : nmi}
+        customer=stripe_cus,
+        amount=AMOUNT,
+        currency='aud',
+        description=f'intelligibill annual fee for NMI: {nmi}',
+        receipt_email=user_["user_email"],
+        metadata={"nmi": nmi}
     )
 
     payment = json.loads(json.dumps(charge), parse_float=decimal.Decimal)
-    populate_users(bill, payment, stripe_cus, charge.id)
-    return jsonify(charge) , 200
+    populate_paid_users(nmi, payment, stripe_cus, charge.id)
+    return jsonify(charge), 200
+
+
+@app.route("/payment/coupon", methods=["POST"])
+def coupon_client():
+    params = request.get_json()
+    coupon = params.get("coupon")
+    nmi = params.get("nmi")
+
+
+    res = {
+        "paid": None,
+        "receipt_url": None,
+        "status": None
+    }
+    if coupon and coupon == "IB":
+        res = {
+            "paid": True,
+            "receipt_url": "coupon",
+            "status": "OK"
+        }
+        payment = dict(res)
+        payment.update(
+            {
+                "coupon": coupon,
+                "amount": Decimal(AMOUNT/100)
+            }
+        )
+        populate_paid_users(nmi, payment=payment, coupon=coupon)
+    return jsonify(res), 200
 
 @app.route('/payment/is_paid', methods=['GET'])
 def is_paid():
     nmi = request.args.get('nmi')
-    is_paid = paid_customer(nmi)
-    if not is_paid: is_paid = False
-    return jsonify({
-        "amount" : 30,
-        "threshold" : 100,
-        "is_paid": is_paid
+    if not nmi:
+        nmi = get_current_nmi()
+    payment = paid_customer(nmi)
 
-    }), 200
-
+    payment.update({"threshold": 100})
+    return jsonify(payment), 200
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
     comment = request.form.get("comment")
     file_obj = request.files.get("pdf_file")
-    user_= coginto_user()
+    user_ = coginto_user()
     if not file_obj:
-        send_feedback( message=comment,user_= user_, bill_file=None)
+        send_feedback(message=comment, user_=user_, bill_file=None)
         result = {"feedback": True}
         result = json.dumps(result, indent=4)
         return result, 200
-
 
     pdf_data = file_obj.read()
     id_file = f"/tmp/{uuid.uuid1()}.pdf"
     with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
         out.write(pdf_data)
         copyfile(out.name, id_file)
-        send_feedback(id_file, comment,user_)
+        send_feedback(id_file, comment, user_)
         result = {"feedback": True}
         result = json.dumps(result, indent=4)
         return result, 200
+
+def get_current_nmi():
+    customer_id = user_id()
+    response = best_offers_table.query(
+        KeyConditionExpression=Key('customer_id').eq(customer_id),
+        ProjectionExpression="priced.users_nmi, priced.address, spot_date"
+    )
+    items = response['Items']
+    spot_date_MAX = datetime.strptime("2000-01-01-00-00-00", '%Y-%m-%d-%H-%M-%S')
+    current = None
+    for x in items:
+        spot_date = datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
+        if spot_date > spot_date_MAX:
+            spot_date_MAX = spot_date
+            current = x
+    print(f"current is {current}")
+    return current["priced"]["users_nmi"]
 
 @app.route("/current_nmi", methods=["GET"])
 def current_nmi():
     customer_id = user_id()
     try:
-        response = tracker_table.query(
+        response = best_offers_table.query(
             KeyConditionExpression=Key('customer_id').eq(customer_id),
             ProjectionExpression="priced.users_nmi, priced.address, spot_date"
         )
         items = response['Items']
-        spot_date_MAX=0
+        spot_date_MAX = datetime.strptime("2000-01-01-00-00-00", '%Y-%m-%d-%H-%M-%S')
         current = None
         for x in items:
-            spot_date = datetime.datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
+            spot_date = datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
             if spot_date > spot_date_MAX:
                 spot_date_MAX = spot_date
                 current = x
@@ -507,7 +630,7 @@ def current_nmi():
 def nmis():
     customer_id = user_id()
     try:
-        response = tracker_table.query(
+        response = best_offers_table.query(
             KeyConditionExpression=Key('customer_id').eq(customer_id),
             ProjectionExpression="priced.users_nmi, priced.address"
         )
@@ -527,12 +650,9 @@ def nmis():
 
 # We only need this for local development.
 if __name__ == '__main__':
+    import yaml
+    with open('zappa_settings.yaml') as json_data:
+        env_vars = yaml.load(json_data, Loader=yaml.FullLoader)['api']['environment_variables']
+        for key, val in env_vars.items():
+            print(key, val)
 
-    ## import yaml
-
-    json_data = open('zappa_settings.yaml')
-    ## env_vars = yaml.load(json_data)['api']['environment_variables']
-    ## for key, val in env_vars.items():
-    ##    os.environ[key] = val
-
-    app.run(port=2003, load_dotenv=True)
