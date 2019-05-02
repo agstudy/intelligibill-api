@@ -491,6 +491,7 @@ def admin_bills():
 def charge_client():
     params = request.get_json()
     token = params.get("stripeToken")
+    
     nmi = params.get("nmi")
     user_ = coginto_user()
     print(f"/payment/charge token is {token}")
