@@ -21,12 +21,14 @@ dev:
     users_bill_table: bill_users
     bests_offers_table: bests_offers
     stripe.api_key: sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss
+    coupon: "BYB_TRIAL"
   events:
   - function: intelligibill.process_upload_miswitch
     event_source:
       arn: arn:aws:s3:::switch-markintell
       events:
       - s3:ObjectCreated:*
+
 
 
 
@@ -38,6 +40,7 @@ api:
   runtime: python3.6
   s3_bucket: intelligibill-api
   domain: api.intelligibill.com.au
+  log_level: ERROR
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/9b2c68b0-6b46-4430-a3a7-2d53b4902ffd
   authorizer:
     type: COGNITO_USER_POOLS
@@ -48,9 +51,10 @@ api:
   iam_authorizer: yes
   cors: yes
   environment_variables:
-    users_paid_table: paid_users
-    users_bill_table: bill_users
-    bests_offers_table: bests_offers
-    stripe.api_key: sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss
+    users_paid_table: paid_users_prod
+    users_bill_table: bill_users_prod
+    bests_offers_table: bests_offers_prod
+    stripe.api_key: sk_live_WmTIpxRkckTGpFwhmhz7uZgb00mbMl7tW3
+    coupon: "BYB_TRIAL"
 
 

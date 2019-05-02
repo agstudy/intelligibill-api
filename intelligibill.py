@@ -25,6 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 
 stripe.api_key = os.environ.get("stripe.api_key")
+COUPON_TOKEN = os.environ.get("coupon")
 
 app = Flask(__name__)
 CORS(app)
@@ -43,7 +44,6 @@ AMOUNT = 3000
 
 def user_id():
     return request.headers.get('user_id')
-
 
 def coginto_user(sub=None):
     if not sub:
@@ -65,14 +65,11 @@ def coginto_user(sub=None):
     return {"user_name": user_name,
             "user_email": user_email}
 
-
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
-
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
-
 
 def populate_tracking(bests, priced, nb_offers, ranking, key_file):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -102,7 +99,6 @@ def populate_tracking(bests, priced, nb_offers, ranking, key_file):
     if customer_id:
         best_offers_table.put_item(Item=item)
 
-
 def populate_users(bill, payment, customer_id, charge_id):
     user_ = coginto_user()
     creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -121,13 +117,7 @@ def populate_users(bill, payment, customer_id, charge_id):
     }
     users_paid_table.put_item(Item=item)
 
-
-def populate_paid_users(
-        nmi,
-        payment,
-        customer_id=None,
-        charge_id= None,
-        coupon = None):
+def populate_paid_users(nmi, payment, customer_id=None, charge_id= None, coupon = None):
     user_ = coginto_user()
     creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
 
@@ -151,7 +141,6 @@ def populate_paid_users(
                 'coupon': coupon,
             })
     users_paid_table.put_item(Item=item)
-
 
 def populate_bill_users(bill):
     user_ = coginto_user()
@@ -257,11 +246,8 @@ def process_upload_miswitch(event, context):
     id = uuid.uuid1()
     local_file = f"/tmp/{id}.pdf"
     s3_resource.Bucket(bucket).download_file(Filename=local_file, Key=key)
-    print(f"key is {key}")
     sub = key.split('/')[1]
-    print(f"sub is {sub}")
     user_ib = coginto_user(sub)
-    print(f"user_ib is {user_ib}")
     file_bytes = open(local_file, 'rb').read()
     url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
     r = requests.post(url_miswitch, files={'pdf': file_bytes},
@@ -305,7 +291,6 @@ def bill_source():
     key = f"private/{user_id()}/{bill_url}"
     key_image = f"""{key.replace(".pdf","")}-page-{page}.png"""
     file_name = f"/tmp/{uuid.uuid1()}.png"
-    print(f"key_image is {key_image}")
     s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=file_name, Key=key_image)
     with open(file_name, 'rb') as bites:
         return send_file(
@@ -447,7 +432,6 @@ def tracker_detail():
     to_date = request.args.get('to_date')
     bill_id = f"""{nmi}_{to_date.replace("/","-")}"""
     customer_id = user_id()
-    print(f"customer_id is {customer_id} and to_date is {to_date} and bill_id is {bill_id}")
     try:
         response = best_offers_table.query(
             KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
@@ -457,7 +441,6 @@ def tracker_detail():
              }
         )
         items = response['Items']
-        print(items)
         if items:
             x = items[0]
             bests = annomyze_offers(x["priced"], x["bests"])
@@ -510,6 +493,7 @@ def charge_client():
     token = params.get("stripeToken")
     nmi = params.get("nmi")
     user_ = coginto_user()
+    print(f"/payment/charge token is {token}")
     customer = stripe.Customer.create(
         email=user_["user_email"],
         source=token
@@ -519,11 +503,11 @@ def charge_client():
         customer=stripe_cus,
         amount=AMOUNT,
         currency='aud',
-        description=f'intelligibill annual fee for NMI: {nmi}',
+        description=f'BeatYourBill annual fee for NMI: {nmi}',
         receipt_email=user_["user_email"],
         metadata={"nmi": nmi}
     )
-
+    print(f"/payment/charge charge is {charge}")
     payment = json.loads(json.dumps(charge), parse_float=decimal.Decimal)
     populate_paid_users(nmi, payment, stripe_cus, charge.id)
     return jsonify(charge), 200
@@ -541,7 +525,7 @@ def coupon_client():
         "receipt_url": None,
         "status": None
     }
-    if coupon and coupon == "IB":
+    if coupon and coupon == COUPON_TOKEN:
         res = {
             "paid": True,
             "receipt_url": "coupon",
