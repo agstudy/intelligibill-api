@@ -5,9 +5,9 @@ dev:
   project_name: intelligibill
   runtime: python3.6
   s3_bucket: intelligibill-dev
-  domain: dev.intelligibill.com.au
-  log_level: ERROR
-  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/9b2c68b0-6b46-4430-a3a7-2d53b4902ffd
+  domain: dev.beatyourbill.com.au
+  log_level: DEBUG
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   authorizer:
     type: COGNITO_USER_POOLS
     provider_arns:
@@ -20,8 +20,12 @@ dev:
     users_paid_table: paid_users
     users_bill_table: bill_users
     bests_offers_table: bests_offers
-    stripe.api_key: sk_test_D5dWWe8ArtNLsJJgLzIqX8Ss
+    bills-bucket: myswitch-bills-bucket
+    stripe.api_key: pk_test_3mpYOKNl4G2IKUYX7SvGAgLh
     coupon: "BYB_TRIAL"
+    source-bill: IB
+    switch-bucket: switch-markintell
+    feedback_list : contact@ag-study.com
   events:
   - function: intelligibill.process_upload_miswitch
     event_source:
@@ -30,6 +34,66 @@ dev:
       - s3:ObjectCreated:*
 
 
+free:
+  app_function: free-intelligibill.app
+  aws_region: ap-southeast-2
+  profile_name: default
+  project_name: intelligibill
+  runtime: python3.6
+  s3_bucket: intelligibill-dev
+  domain: free.beatyourbill.com.au
+  log_level: ERROR
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
+  cors: yes
+  environment_variables:
+    users_bill_table: bill_users_free
+    bests_offers_table: bests_offers_free
+    bills-bucket: myswitch-bills-bucket
+    switch-bucket: switch-markintell
+  events:
+  - function: intelligibill.process_upload_miswitch
+    event_source:
+      arn: arn:aws:s3:::switch-markintell
+      events:
+      - s3:ObjectCreated:*
+
+blog:
+  app_function: blog-byb.app
+  aws_region: ap-southeast-2
+  profile_name: default
+  project_name: byb-blog
+  runtime: python3.6
+  s3_bucket: byb-bucket-blog
+  domain: blog.beatyourbill.com.au
+  log_level: ERROR
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
+  cors: yes
+  environment_variables:
+    blog-bucket: blog-content-byb
+
+
+prodfree:
+  app_function: free-intelligibill.app
+  aws_region: ap-southeast-2
+  profile_name: default
+  project_name: intelligibill
+  runtime: python3.6
+  s3_bucket: intelligibill-dev
+  domain: prodfree.beatyourbill.com.au
+  log_level: ERROR
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
+  cors: yes
+  environment_variables:
+    users_bill_table: bill_users_prod_free
+    bests_offers_table: bests_offers_prod_free
+    bills-bucket: myswitch-bills-bucket
+    switch-bucket: switch-markintell
+  events:
+  - function: intelligibill.process_upload_miswitch
+    event_source:
+      arn: arn:aws:s3:::switch-markintell
+      events:
+      - s3:ObjectCreated:*
 
 
 api:
@@ -39,9 +103,9 @@ api:
   project_name: intelligibill
   runtime: python3.6
   s3_bucket: intelligibill-api
-  domain: api.intelligibill.com.au
+  domain: api.beatyourbill.com.au
   log_level: ERROR
-  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/9b2c68b0-6b46-4430-a3a7-2d53b4902ffd
+  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   authorizer:
     type: COGNITO_USER_POOLS
     provider_arns:
@@ -54,7 +118,15 @@ api:
     users_paid_table: paid_users_prod
     users_bill_table: bill_users_prod
     bests_offers_table: bests_offers_prod
+    bills-bucket: beatyourbill-bucket
     stripe.api_key: sk_live_WmTIpxRkckTGpFwhmhz7uZgb00mbMl7tW3
-    coupon: "BYB_TRIAL"
-
-
+    coupon: "SOLAR_ANALYTICS_STUFF"
+    source-bill: BYB
+    switch-bucket: byb-markintell
+    feedback_list : contact@ag-study.com, bruce.mountain@cmeaustralia.com.au
+  events:
+  - function: intelligibill.process_upload_miswitch
+    event_source:
+      arn: arn:aws:s3:::byb-markintell
+      events:
+      - s3:ObjectCreated:*

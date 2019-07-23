@@ -169,24 +169,31 @@ class Extractor:
             return result
 
 
+
     @staticmethod
     def check_bill(document_path):
 
         is_bill = False
+        embedded = ["resiembeddednetwork",'ocenergy.com.au','winconnect.com.au']
+        bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
+
         try:
             pdf_text =  Extractor.pdf_to_text(document_path)
             if not pdf_text:
-                return False, "scanned bill"
+                return False, f"This is a scanned bill.\n{bad_message}"
             else:
                 for x in pdf_text:
                     if "nmi" in x.lower():
                         is_bill = True
                         break
-            if not is_bill: return is_bill, "This pdf is not a bill"
+                    if any(y in x.lower().replace(" ","") for y in embedded):
+                        is_bill =True
+                        break
+            if not is_bill: return is_bill, f"This is not a valid bill.\n{bad_message}"
             return is_bill,x
         except Exception as e:
             print(e)
-            return False,"not a valid pdf"
+            return False, f"This is not a valid pdf.\n{bad_message}"
 
 
 
