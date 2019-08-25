@@ -244,7 +244,7 @@ def bests():
             return bad_results("no_parsing", file=id, file_name=file_name)
         parsed = bp.parser.json
         priced: dict = Bill(dict(parsed))()
-        if priced:
+        if priced.get("retailer"):
             if priced["retailer"] in ["winenergy","ocenergy","embeddedorigin"]:
                 return bad_results("embedded")
 
@@ -255,7 +255,20 @@ def bests():
         populate_bill_users(priced,provider, customer, ip )
         populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file,customer_id=customer)
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
-        s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
+        ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
+        try:
+            url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
+            r = requests.post(url_miswitch, files={'pdf': pdf_data},
+                              data={"source": SOURCE_BILL,
+                                    "file_name": "_".join(key_file.split("/")[1:]),
+                                    "user_name": "anonymous_name",
+                                    "user_email": "anonymous_email"
+                                    })
+            print("reponse miswitch", r)
+        except Exception as ex:
+            print(ex)
+            
+
         os.remove(id)
         if not len(res):
 

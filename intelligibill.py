@@ -614,7 +614,9 @@ def charge_client():
     print(f"/payment/charge token is {token}")
     customer = stripe.Customer.create(
         email=user_["user_email"],
-        source=token
+        source=token,
+        name= user_["user_name"],
+        description=nmi
     )
     stripe_cus = customer.id
     charge = stripe.Charge.create(
