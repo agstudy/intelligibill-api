@@ -17,6 +17,7 @@ import os
 import requests
 import stripe
 from urllib import parse
+from smart_meter import get_history, RunAvg
 
 from send_bill import send_ses_bill, send_feedback
 
@@ -371,6 +372,18 @@ def bests():
             if priced["retailer"] in ["winenergy","ocenergy","embeddedorigin"]:
                 return bad_results("embedded")
 
+        history = get_history('beatyourbill-bucket', parsed["users_nmi"])
+        history.append(parsed)
+        if history:
+            runn = RunAvg(history).running_parameters()
+            curr = RunAvg([parsed]).running_parameters()
+            ann_factor = round(runn["run_avg_daily_use"] / curr["run_avg_daily_use"], 5)
+            for k, v in parsed.items():
+                if "_usage" in k:
+                    parsed[k] = round(v * ann_factor)
+            if parsed["has_solar"]:
+                parsed["ann_solar_volume"] = runn["run_solar_export"]
+            priced = Bill(dict(parsed))()
 
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         key_file = bill_file_name(priced)

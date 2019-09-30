@@ -17,6 +17,7 @@ from send_bill import send_ses_bill
 from flask_cors import CORS
 from datetime import datetime
 import uuid
+from smart_meter import get_history, RunAvg
 
 
 SOURCE_BILL = os.environ.get("source-bill")
@@ -137,7 +138,13 @@ def bad_results(message, priced={}, file=None, file_name=None):
                     Could you please check that it is an original PDF bill. 
                     If the problem is on our side, we will fix it and let you know 
                     if you have signed up with us
-                  """
+                  """,
+            "bad_best_offers": """
+                            We are sorry we could not parse your bill very well. 
+                            Could you please check that it is an original PDF bill. 
+                            If the problem is on our side, we will fix it and let you know 
+                            if you have signed up with us
+                          """
         }
         return switcher.get(argument, message)
 
@@ -211,6 +218,20 @@ def annomyze_offers(priced, offers):
     pass
 
 
+def scanned_priced(pdf_file):
+    ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
+    try:
+        url_miswitch = "https://switch.markintell.com.au/api/pdf/scanned-bill"
+        r = requests.post(url_miswitch, files={"pdf":pdf_file})
+        if r.status_code == 200:
+            parsed = json.loads(r.content)
+            return True,  parsed
+    except Exception as ex:
+        print(ex)
+        bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
+        return False, f"This is a scanned bill.\n{bad_message}"
+
+
 @app.route("/bests", methods=["POST"])
 def bests():
     ip = request.remote_addr
@@ -226,30 +247,56 @@ def bests():
         out.write(pdf_data)
         copyfile(out.name, id)
         is_bill, message = Extractor.check_bill(out.name)
-        if not is_bill:
-            return bad_results(message, file=id, file_name=file_name)
-        Extractor.process_pdf(out.name)
-        bp = BillParser(
-            xml_=Extractor.xml_,
-            xml_data_=Extractor.xml_data,
-            txt_=Extractor.txt_,
-            file_name=file_name)
-        try:
-            bp.parse_bill()
-        except Exception as ex:
-            print(ex)
-            return bad_results("no_parsing", file=id, file_name=file_name)
 
-        if not bp.parser or not bp.parser.json:
-            return bad_results("no_parsing", file=id, file_name=file_name)
-        parsed = bp.parser.json
-        priced: dict = Bill(dict(parsed))()
+        if not is_bill:
+            if "scanned" in message:
+                res, parsed = scanned_priced(pdf_data)
+                if not res:
+                    return bad_results(parsed, file=id, file_name=file_name)
+            else:
+                return bad_results(message, file=id, file_name=file_name)
+        else:
+            Extractor.process_pdf(out.name)
+            bp = BillParser(
+                xml_=Extractor.xml_,
+                xml_data_=Extractor.xml_data,
+                txt_=Extractor.txt_,
+                file_name=file_name)
+            try:
+                bp.parse_bill()
+            except Exception as ex:
+                print(ex)
+                return bad_results("no_parsing", file=id, file_name=file_name)
+            if not bp.parser or not bp.parser.json:
+                return bad_results("no_parsing", file=id, file_name=file_name)
+            parsed = bp.parser.json
+
+        priced = Bill(dict(parsed))()
         if priced.get("retailer"):
             if priced["retailer"] in ["winenergy","ocenergy","embeddedorigin"]:
                 return bad_results("embedded")
 
+        history = get_history('beatyourbill-bucket', parsed["users_nmi"])
+        history.append(parsed)
+        if history:
+            runn = RunAvg(history).running_parameters()
+            curr = RunAvg([parsed]).running_parameters()
+            ann_factor = round(runn["run_avg_daily_use"] / curr["run_avg_daily_use"], 5)
+            for k, v in parsed.items():
+                if "_usage" in k:
+                    parsed[k] = round(v * ann_factor)
+            if parsed["has_solar"]:
+                parsed["ann_solar_volume"] = runn["run_solar_export"]
+            priced = Bill(dict(parsed))()
 
-        res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+
+
+        try:
+            res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+        except Exception as ex:
+            print(ex)
+            return bad_results("bad_best_offers", file=id, file_name=file_name)
+
         key_file = bill_file_name(priced)
         customer = user_id()
         populate_bill_users(priced,provider, customer, ip )
