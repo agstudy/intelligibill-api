@@ -173,6 +173,7 @@ class Extractor:
         is_bill = False
         embedded = ["resiembeddednetwork",'ocenergy.com.au','winconnect.com.au']
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
+        gas_message = "Sorry, we do not yet cover gas bills.\n Can you please make sure you have an original electricity PDF and then try again."
 
         try:
             pdf_text =  Extractor.pdf_to_text(document_path)
@@ -180,6 +181,8 @@ class Extractor:
                 return False, f"This is a scanned bill.\n{bad_message}"
             else:
                 for x in pdf_text:
+                    if "mirn" in x.lower() or "dpi" in x.lower():
+                        return False, gas_message
                     if "nmi" in x.lower():
                         is_bill = True
                         break
