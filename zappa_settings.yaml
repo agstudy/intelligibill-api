@@ -42,7 +42,7 @@ free:
   runtime: python3.6
   s3_bucket: intelligibill-dev
   domain: free.beatyourbill.com.au
-  log_level: ERROR
+  log_level: DEBUG
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   cors: yes
   environment_variables:

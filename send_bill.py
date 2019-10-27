@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from zappa.asynchronous import task
 
+
 feedback_list = os.environ.get('feedback_list')
 
 
@@ -53,11 +54,14 @@ def send_feedback(bill_file,message,user_):
 
 
 @task
-def send_ses_bill(bill_file,user_,user_message):
-
-    SENDER = "BeatYourBill <contact@ag-study.com>"
-    RECIPIENT = feedback_list.split(',')
+def send_ses_bill(bill_file,user_,user_message, to=None):
+    SENDER = "BeatYourBill <contact@beatyourbill.com.au>"
     AWS_REGION = "us-east-1"
+
+    if to:
+        RECIPIENT = to
+    else:
+        RECIPIENT = feedback_list.split(',')
     SUBJECT = "BeatYourBill:  bill parsing problem"
 
     message = "Hi Bruce,\r\nPlease see what happened with the attached bill"
@@ -74,6 +78,17 @@ def send_ses_bill(bill_file,user_,user_message):
     </body>
     </html>
     """
+
+    if to :
+        BODY_HTML = f"""\
+        <html>
+        <head></head>
+        <body>
+        <h1>Hi!</h1>
+        <p>{user_message}</p>
+        </body>
+        </html>
+        """
 
     CHARSET = "utf-8"
 

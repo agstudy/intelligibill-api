@@ -10,8 +10,12 @@ import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from botocore.exceptions import ClientError
+from send_bill import send_ses_bill
+from tempfile import NamedTemporaryFile
+
 
 s3_resource = boto3.resource('s3')
+
 
 class SavingResult:
     retailer_name: str
@@ -20,6 +24,7 @@ class SavingResult:
     saving: int
     offer_total_bill: int
 
+
 class EmailInput:
     username: str
     cta: str
@@ -27,8 +32,9 @@ class EmailInput:
     saving_results: List[SavingResult]
     email_body: str
 
-def populateResult(el) :
-    row_content =     f"""
+
+def populateResult(el):
+    row_content = f"""
 <table align="left" border="0" cellpadding="0" cellspacing="0" style="width: 100%; min-width:425px">
     <tr>
     <td style="padding:16px">
@@ -78,7 +84,7 @@ def populateResult(el) :
                                                 </tr>
                                                 <tr style="font-size: 14px; line-height: 16px; text-align: right;">
                                                     <td style="padding-top: 6px;  color: #2a34a5;">
-                                                        Estimated Annuel Bill
+                                                        Estimated Annual Bill
                                                     </td>
                                                 </tr>
                                             </table>
@@ -96,8 +102,9 @@ def populateResult(el) :
 </table>"""
     return BeautifulSoup(row_content, 'html.parser')
 
-def populateHeader(saving,text = None):
-    savingText =    f"""
+
+def populateHeader(saving, text=None):
+    savingText = f"""
     <td  style="color:#75737a; font-family:sans-serif; font-size:16px; line-height:22px">
         Based on current usage, we've found you can save 
         <span style="color:#4a4f89; font-family:sans-serif; font-size:24px; font-weight:bold; line-height:18px; padding:0 0 15px 0">
@@ -110,13 +117,15 @@ def populateHeader(saving,text = None):
     <td  style="color:#75737a; font-family:sans-serif; font-size:16px; line-height:22px">{text}</td>
     """
 
-    if saving :
-        return  BeautifulSoup(savingText, 'html.parser')
+    if saving:
+        return BeautifulSoup(savingText, 'html.parser')
 
     return BeautifulSoup(noSavingText, 'html.parser')
 
+
 def create_email(r):
     ei = EmailInput()
+
     ei.username = r["bill"]["name"]
     ei.cta = "Join Now and Save!"
     if r["bests"]:
@@ -128,7 +137,7 @@ def create_email(r):
             sr.retailer_link = x["retailer_url"]
             sr.offer_total_bill = x["offer_total_bill"]
             sr.saving = x["saving"]
-            sr.retailer_img = x["retailer"].lower().split(" ",1)[0]
+            sr.retailer_img = x["retailer"].lower().split(" ", 1)[0]
             if "retalier" in x["retailer"].lower():
                 sr.retailer_img = "retalier"
                 sr.retailer_name.replace("etalier", "etailer")
@@ -136,8 +145,8 @@ def create_email(r):
             ei.saving_results.append(sr)
         with open("email.html") as template:
             txt = template.read()
-            soup = BeautifulSoup(txt,'html.parser')
-            header_text = soup.find(class_= "header_text")
+            soup = BeautifulSoup(txt, 'html.parser')
+            header_text = soup.find(class_="header_text")
             header_text.append(populateHeader(ei.saving))
             result_row = soup.find(class_="result_row")
 
@@ -152,19 +161,18 @@ def create_email(r):
         ei.email_body = str(soup)
         return ei
 
-def send_result_email(to, body_html,saving):
 
-    SENDER = "contact@beatyourbill.com.au"
+def send_result_email(to, body_html, saving):
+    SENDER = "BeatYourBill <contact@beatyourbill.com.au>"
     RECIPIENT = [to]
     AWS_REGION = "us-east-1"
     SUBJECT = f"Save ${saving} a year off your electricity bill"
-
 
     BODY_HTML = body_html
 
     CHARSET = "utf-8"
 
-    client = boto3.client('ses',region_name=AWS_REGION)
+    client = boto3.client('ses', region_name=AWS_REGION)
 
     msg = MIMEMultipart('mixed')
     msg['Subject'] = SUBJECT
@@ -176,9 +184,9 @@ def send_result_email(to, body_html,saving):
     try:
         response = client.send_raw_email(
             Source=SENDER,
-            Destinations= RECIPIENT,
+            Destinations=RECIPIENT,
             RawMessage={
-                'Data':msg.as_string(),
+                'Data': msg.as_string(),
             }
         )
     except ClientError as e:
@@ -187,9 +195,9 @@ def send_result_email(to, body_html,saving):
         print("Email sent! Message ID:"),
         print(response['MessageId'])
 
-def parse_send_email(file_name):
 
-    with open (file_name) as f:
+def parse_send_email(file_name):
+    with open(file_name) as f:
         msg = email.message_from_file(f)
         From = msg["from"].strip()
         attachments = msg.get_payload()
@@ -197,16 +205,25 @@ def parse_send_email(file_name):
             try:
                 file_bytes = attachment.get_payload(decode=True, )
                 bill_name = attachment.get_filename()
-                print("bill_name is ",bill_name)
+                print("email attachment bill is ", bill_name)
                 if bill_name:
                     byb_url = "https://free.beatyourbill.com.au/bests"
                     r = requests.post(byb_url, files={'pdf': file_bytes})
                     res = json.loads(r.content)
-                    ei = create_email(res)
-                    send_result_email(From, ei.email_body, ei.saving)
+                    msg = res.get('message')
+                    if msg == "saving":
+                        ei = create_email(res)
+                        send_result_email(From, ei.email_body, ei.saving)
+                    else:
+                        id = f"/tmp/{uuid.uuid1()}.pdf"
+                        with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+                            out.write(file_bytes)
+                            user_ = {"user_name": From, "user_email": From}
+                            send_ses_bill(out.name, user_, msg, to= [From])
             except Exception as detail:
                 print(detail)
                 pass
+
 
 def process_new_email(event, context):
     """
@@ -222,3 +239,9 @@ def process_new_email(event, context):
     parse_send_email(local_file)
 
 
+if __name__ == '__main__':
+    file_name = "/home/agstudy/Downloads/2rkih1mue32bif2llctqf1k1470946svucbobeo1"
+
+    ## file_name = "/home/agstudy/Downloads/example_mail"
+    parse_send_email(file_name)
+    pass

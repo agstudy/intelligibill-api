@@ -1,5 +1,5 @@
 from flask import Flask, send_file
-from flask import jsonify, request
+from flask import jsonify, request, redirect
 import boto3
 from tempfile import NamedTemporaryFile
 from extractor import Extractor
@@ -338,5 +338,23 @@ def bests():
             "message": "saving"}
         result = json.dumps(result, indent=4)
         return result, 200
+
+
+@app.route("/confirmSignup", methods=["GET"])
+def confirmSignUp():
+
+    user_name = request.args.get('username')
+    client_id = request.args.get('clientId')
+    confirmation_code = request.args.get('code')
+    email = request.args.get('email')
+    cognito = boto3.client('cognito-idp')
+    cognito.confirm_sign_up(
+        ClientId=client_id,
+        Username=user_name,
+        ConfirmationCode = confirmation_code
+    )
+    result = {"confirmed" : True}
+    return result , 200
+
 
 
