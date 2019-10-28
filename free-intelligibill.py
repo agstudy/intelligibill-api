@@ -73,7 +73,7 @@ def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_i
     if customer_id:
         best_offers_table.put_item(Item=item)
 
-def populate_bill_users(bill, provider, customer_id, ip):
+def populate_bill_users(bill, provider, customer_id, ip,user_email, user_name):
     sub = customer_id
     creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
 
@@ -81,8 +81,8 @@ def populate_bill_users(bill, provider, customer_id, ip):
         "bill_id": bill["users_nmi"],
         "creation_date": creation_date,
         "to_date": bill["to_date"],
-        "user_name": "anonymous_name",
-        "user_email": "anonymous_email",
+        "user_name":user_name,
+        "user_email": user_email,
         "address": bill["address"],
         "bill_user_name": bill["name"],
         "region": bill["region"],
@@ -240,6 +240,14 @@ def bests():
     pdf_data = file_obj.read()
     is_business = request.form.get("is_business")
     provider = request.form.get("provider")
+    email = request.form.get("email")
+    if email:
+        user_email =  email
+        user_name = email
+    else:
+        user_email = "anonymous_email"
+        user_name = "anonymous_name"
+
     file_name = file_obj.filename
     print("trying to parse ...", file_name)
     id = f"/tmp/{uuid.uuid1()}.pdf"
@@ -299,7 +307,7 @@ def bests():
 
         key_file = bill_file_name(priced)
         customer = user_id()
-        populate_bill_users(priced,provider, customer, ip )
+        populate_bill_users(priced,provider, customer, ip ,user_email,user_name)
         populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file,customer_id=customer)
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
         ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
@@ -308,8 +316,8 @@ def bests():
             r = requests.post(url_miswitch, files={'pdf': pdf_data},
                               data={"source": SOURCE_BILL,
                                     "file_name": "_".join(key_file.split("/")[1:]),
-                                    "user_name": "anonymous_name",
-                                    "user_email": "anonymous_email"
+                                    "user_name": user_name,
+                                    "user_email": user_email
                                     })
             print("reponse miswitch", r)
         except Exception as ex:

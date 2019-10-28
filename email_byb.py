@@ -14,6 +14,7 @@ from send_bill import send_ses_bill
 from tempfile import NamedTemporaryFile
 
 
+
 s3_resource = boto3.resource('s3')
 
 
@@ -207,8 +208,8 @@ def parse_send_email(file_name):
                 bill_name = attachment.get_filename()
                 print("email attachment bill is ", bill_name)
                 if bill_name:
-                    byb_url = "https://free.beatyourbill.com.au/bests"
-                    r = requests.post(byb_url, files={'pdf': file_bytes})
+                    byb_url = " https://prodfree.beatyourbill.com.au/bests"
+                    r = requests.post(byb_url, files={'pdf': file_bytes}, data = {"email": From, "provider":"email"})
                     res = json.loads(r.content)
                     msg = res.get('message')
                     if msg == "saving":

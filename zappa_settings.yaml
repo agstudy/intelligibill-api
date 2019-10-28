@@ -58,11 +58,7 @@ free:
       arn: arn:aws:s3:::switch-markintell
       events:
       - s3:ObjectCreated:*
-  - function: email_byb.process_new_email
-    event_source:
-      arn: arn:aws:s3:::byb-emails
-      events:
-      - s3:ObjectCreated:*
+
 blog:
   app_function: blog-byb.app
   aws_region: ap-southeast-2
@@ -102,7 +98,11 @@ prodfree:
       arn: arn:aws:s3:::byb-markintell
       events:
       - s3:ObjectCreated:*
-
+  - function: email_byb.process_new_email
+    event_source:
+      arn: arn:aws:s3:::byb-emails
+      events:
+      - s3:ObjectCreated:*
 
 api:
   app_function: intelligibill.app
