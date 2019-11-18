@@ -18,6 +18,8 @@ from flask_cors import CORS
 from datetime import datetime
 import uuid
 from smart_meter import get_history, RunAvg
+from shared import annomyze_offers, bill_id, populate_bill_users, populate_bests_offers
+
 
 
 SOURCE_BILL = os.environ.get("source-bill")
@@ -38,90 +40,10 @@ BAD_BILLS_BUCKET = "ib-bad-bills"
 def user_id():
     return f"anonymous-{uuid.uuid1()}"
 
-def bill_id(priced):
-    return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
 
-def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_id):
-    spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-
-    saving = -1;
-    if len(bests):
-        saving = bests[0]["saving"]
-    tracking = {
-        'avg_daily_use': priced["avg_daily_use"],
-        'ranking': ranking,
-        'evaluated': nb_offers,
-        'saving': saving,
-        'to_date': priced["to_date"]
-    }
-    priced = {k: v for k, v in priced.items() if v is not None}
-
-    item = {
-        'customer_id': customer_id,
-        'source_bill': {'url': key_file},
-        'bill_id_to_date': bill_id(priced),
-        'spot_date': spot_date,
-        'bests': bests,
-        'priced': priced,
-        'tracking': tracking
-    }
-    item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
-    print(item)
-    if customer_id:
-        best_offers_table.put_item(Item=item)
-
-def populate_bill_users(bill, provider, customer_id, ip,user_email, user_name):
-    sub = customer_id
-    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-
-    item = {
-        "bill_id": bill["users_nmi"],
-        "creation_date": creation_date,
-        "to_date": bill["to_date"],
-        "user_name":user_name,
-        "user_email": user_email,
-        "address": bill["address"],
-        "bill_user_name": bill["name"],
-        "region": bill["region"],
-        "sub": sub,
-        "provider":provider,
-        "ip":ip
-    }
-
-    users_bill_table.put_item(Item=item)
-
-def update_bests_offers(bests, priced, nb_offers, ranking):
-    spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    customer_id = user_id()
-
-    saving = -1;
-    if len(bests):
-        saving = bests[0]["saving"]
-    tracking = {
-        'avg_daily_use': priced["avg_daily_use"],
-        'ranking': ranking,
-        'evaluated': nb_offers,
-        'saving': saving,
-        'to_date': priced["to_date"]
-    }
-
-    priced = json.loads(json.dumps(priced), parse_float=decimal.Decimal)
-    bests = json.loads(json.dumps(bests), parse_float=decimal.Decimal)
-    tracking = json.loads(json.dumps(tracking), parse_float=decimal.Decimal)
-    key = {
-        "bill_id_to_date": bill_id(priced),
-        "customer_id": customer_id}
-    best_offers_table.update_item(
-        Key=key,
-        UpdateExpression="set priced=:priced,tracking=:tracking,best=:bests,spot_date=:spot_date",
-        ExpressionAttributeValues={':priced': priced,
-                                   ':bests': bests,
-                                   ':tracking': tracking,
-                                   ':spot_date': spot_date},
-        ReturnValues="UPDATED_NEW")
 
 def bad_results(message, priced={}, file=None, file_name=None):
 
@@ -162,15 +84,6 @@ def bad_results(message, priced={}, file=None, file_name=None):
          "message": message
          }), 200
 
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, decimal.Decimal):
-            if o % 1 > 0:
-                return float(o)
-            else:
-                return int(o)
-        return super(DecimalEncoder, self).default(o)
-
 def process_upload_miswitch(event, context):
     """
     Process a file upload.
@@ -193,31 +106,6 @@ def process_upload_miswitch(event, context):
                             })
     print("reponse miswitch", r)
 
-def annomyze_offers(priced, offers):
-    for i, x in enumerate(offers):
-        if x["saving"] > 100:
-            o = x["origin_offer"]
-            tariff = o["tariff"]
-            index = i + 1
-            x["url"] = f"url_{index}"
-            o["url"] = f"url_{index}"
-            x["retailer"] = f"RETALIER{index}"
-            o["retailer"] = f"RETALIER{index}"
-            x["distributor"] = f"DISTRIBUTOR{index}"
-            o["distributor"] = f"DISTRIBUTOR{index}"
-            x["offer_id"] = f"OFFER_ID_{index}"
-            o["offer_id"] = f"OFFER_ID_{index}"
-            o["offer_name"] = f"OFFER_NAME_{index}"
-            o["retailer_url"] = f"RETALIER_URL{index}"
-            o["retailer_phone"] = f"PHONE{index}"
-
-            if "eligibility" in o: del o["eligibility"]
-            if "eligibility" in tariff: del tariff["eligibility"]
-
-    return offers
-    pass
-
-
 def scanned_priced(pdf_file):
     ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
     try:
@@ -230,7 +118,6 @@ def scanned_priced(pdf_file):
         print(ex)
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         return False, f"This is a scanned bill.\n{bad_message}"
-
 
 @app.route("/bests", methods=["POST"])
 def bests():
@@ -249,8 +136,8 @@ def bests():
         user_name = "anonymous_name"
 
     file_name = file_obj.filename
-    print("trying to parse ...", file_name)
     id = f"/tmp/{uuid.uuid1()}.pdf"
+    print(f"TRYING TO PARSE {file_name} copied in {id}")
     with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
         out.write(pdf_data)
         copyfile(out.name, id)
@@ -336,7 +223,7 @@ def bests():
                 "message": "no saving"}
             result = json.dumps(result, indent=4)
             return result, 200
-        res = annomyze_offers(priced, res)
+        res = annomyze_offers(res)
         result = {
             "evaluated": nb_offers,
             "ranking": ranking,
@@ -347,7 +234,6 @@ def bests():
         result = json.dumps(result, indent=4)
         return result, 200
 
-
 @app.route("/confirmSignup", methods=["GET"])
 def confirmSignUp():
 
@@ -356,12 +242,16 @@ def confirmSignUp():
     confirmation_code = request.args.get('code')
     email = request.args.get('email')
     cognito = boto3.client('cognito-idp')
-    cognito.confirm_sign_up(
-        ClientId=client_id,
-        Username=user_name,
-        ConfirmationCode = confirmation_code
-    )
-    result = {"confirmed" : True}
+    try:
+        cognito.confirm_sign_up(
+            ClientId=client_id,
+            Username=user_name,
+            ConfirmationCode = confirmation_code
+        )
+        result = {"confirmed" : True}
+    except:
+        result = {"confirmed" : False}
+
     return result , 200
 
 

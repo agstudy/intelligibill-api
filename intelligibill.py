@@ -18,6 +18,7 @@ import requests
 import stripe
 from urllib import parse
 from smart_meter import get_history, RunAvg
+from shared import annomyze_offers, bill_id, populate_bests_offers, populate_bill_users
 
 from send_bill import send_ses_bill, send_feedback
 
@@ -70,43 +71,10 @@ def coginto_user(sub=None):
             "user_email": user_email}
 
 
-def bill_id(priced):
-    return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
-
 
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
 
-
-def populate_bests_offers(bests, priced, nb_offers, ranking, key_file):
-    spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    customer_id = user_id()
-
-    saving = -1;
-    if len(bests):
-        saving = bests[0]["saving"]
-    tracking = {
-        'avg_daily_use': priced["avg_daily_use"],
-        'ranking': ranking,
-        'evaluated': nb_offers,
-        'saving': saving,
-        'to_date': priced["to_date"]
-    }
-    priced = {k: v for k, v in priced.items() if v is not None}
-
-    item = {
-        'customer_id': customer_id,
-        'source_bill': {'url': key_file},
-        'bill_id_to_date': bill_id(priced),
-        'spot_date': spot_date,
-        'bests': bests,
-        'priced': priced,
-        'tracking': tracking
-    }
-    item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
-    print(item)
-    if customer_id:
-        best_offers_table.put_item(Item=item)
 
 
 def populate_paid_users(nmi, payment, customer_id=None, charge_id=None, coupon=None):
@@ -135,25 +103,6 @@ def populate_paid_users(nmi, payment, customer_id=None, charge_id=None, coupon=N
     users_paid_table.put_item(Item=item)
 
 
-def populate_bill_users(bill,ip):
-    sub = user_id()
-    user_ = coginto_user()
-    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-
-    item = {
-        "bill_id": bill["users_nmi"],
-        "creation_date": creation_date,
-        "to_date": bill["to_date"],
-        "user_name": user_["user_name"],
-        "user_email": user_["user_email"],
-        "address": bill["address"],
-        "bill_user_name": bill["name"],
-        "region": bill["region"],
-        "sub": sub,
-        "ip":ip
-    }
-
-    users_bill_table.put_item(Item=item)
 
 
 def paid_customer(nmi):
@@ -279,32 +228,6 @@ def process_upload_miswitch(event, context):
     print("reponse miswitch", r)
 
 
-def annomyze_offers(priced, offers):
-    nmi = priced["users_nmi"]
-    if not paid_customer(nmi)["is_paid"]:
-        for i, x in enumerate(offers):
-            if x["saving"] > 100:
-                o = x["origin_offer"]
-                tariff = o["tariff"]
-                index = i + 1
-                x["url"] = f"url_{index}"
-                o["url"] = f"url_{index}"
-                x["retailer"] = f"RETALIER{index}"
-                o["retailer"] = f"RETALIER{index}"
-                x["distributor"] = f"DISTRIBUTOR{index}"
-                o["distributor"] = f"DISTRIBUTOR{index}"
-                x["offer_id"] = f"OFFER_ID_{index}"
-                o["offer_id"] = f"OFFER_ID_{index}"
-                o["offer_name"] = f"OFFER_NAME_{index}"
-                o["retailer_url"] = f"RETALIER_URL{index}"
-                o["retailer_phone"] = f"PHONE{index}"
-
-                if "eligibility" in o: del o["eligibility"]
-                if "eligibility" in tariff: del tariff["eligibility"]
-
-    return offers
-    pass
-
 
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
@@ -387,8 +310,10 @@ def bests():
 
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         key_file = bill_file_name(priced)
-        populate_bill_users(priced,ip)
-        populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file)
+        customer = user_id()
+        user_ = coginto_user()
+        populate_bill_users(priced, "connected", customer, ip, user_["user_email"], user_["user_name"])
+        populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id= user_id())
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
         s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
         os.remove(id)
@@ -403,7 +328,7 @@ def bests():
                 "message": "no saving"}
             result = json.dumps(result, indent=4)
             return result, 200
-        res = annomyze_offers(priced, res)
+        res = annomyze_offers(res)
         result = {
             "evaluated": nb_offers,
             "ranking": ranking,
@@ -570,7 +495,7 @@ def tracker_detail():
         items = response['Items']
         if items:
             x = items[0]
-            bests = annomyze_offers(x["priced"], x["bests"])
+            bests = annomyze_offers( x["bests"])
             result = {"bests": bests, "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200

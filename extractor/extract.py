@@ -174,6 +174,8 @@ class Extractor:
         embedded = ["resiembeddednetwork",'ocenergy.com.au','winconnect.com.au']
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         gas_message = "Sorry, we do not yet cover gas bills.\n Can you please make sure you have an original electricity PDF and then try again."
+        installment_message = """This is an installment bill that do not contain your consumption profile.\n
+                              Can you please make sure you have an electricity bill with consumption rates and volumes and then try again."""
 
         try:
             pdf_text =  Extractor.pdf_to_text(document_path)
@@ -186,6 +188,8 @@ class Extractor:
                     if "nmi" in x.lower():
                         is_bill = True
                         break
+                    if "Instalment Bill" in x:
+                        return False, installment_message
                     if any(y in x.lower().replace(" ","") for y in embedded):
                         is_bill =True
                         break
