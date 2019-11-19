@@ -328,7 +328,9 @@ def bests():
                 "message": "no saving"}
             result = json.dumps(result, indent=4)
             return result, 200
-        res = annomyze_offers(res)
+        nmi = priced["users_nmi"]
+        if not paid_customer(nmi)["is_paid"]:
+            res = annomyze_offers(res)
         result = {
             "evaluated": nb_offers,
             "ranking": ranking,
