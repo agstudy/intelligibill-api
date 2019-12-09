@@ -18,7 +18,8 @@ from flask_cors import CORS
 from datetime import datetime
 import uuid
 from smart_meter import get_history, RunAvg
-from shared import annomyze_offers, bill_id, populate_bill_users, populate_bests_offers, copy_object
+from shared import annomyze_offers, bill_id, populate_bill_users, populate_bests_offers, copy_object, retrive_bests_by_id, _create_best_result
+import hashlib
 
 from flask_request_id_header.middleware import RequestID
 
@@ -34,6 +35,7 @@ s3_resource = boto3.resource('s3')
 dynamodb = boto3.resource('dynamodb')
 best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
 users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
+upload_table = dynamodb.Table(os.environ.get('upload_table'))
 
 BILLS_BUCKET = os.environ.get('bills-bucket')
 SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
@@ -42,12 +44,17 @@ BAD_BILLS_BUCKET = "ib-bad-bills"
 
 def user_id(priced):
     name = priced.get("name")
-    if not name : name = "anonymous"
+    if not name:
+        name = "anonymous"
+    else:
+        name = name.lower().split()[-1]
     nmi = priced["users_nmi"].lower()
-    return f"""{nmi}-{name.lower().replace(" ","")}"""
+    return f"""{nmi}-{name}"""
+
 
 def bill_file_name(priced, user):
     return f"private/{user}/{bill_id(priced)}.pdf"
+
 
 def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
     def user_message(argument):
@@ -74,8 +81,8 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
 
     message = user_message(message)
     if upload_id:
-        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{upload_id}.pdf")
-        send_ses_bill(bill_file=None, user_="anonymous", user_message=message,upload_id = upload_id)
+        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{message}/{upload_id}.pdf")
+        send_ses_bill(bill_file=None, user_="anonymous", user_message=message, upload_id=upload_id)
     elif file:
         s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
         send_ses_bill(bill_file=file, user_="anonymous", user_message=message)
@@ -89,6 +96,7 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
             "message": message
         }), 200
 
+
 def scanned_priced(pdf_file):
     ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
     try:
@@ -101,6 +109,7 @@ def scanned_priced(pdf_file):
         print(ex)
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         return False, f"This is a scanned bill.\n{bad_message}"
+
 
 def _parse_upload(local_file, file_name, upload_id):
     Extractor.process_pdf(local_file)
@@ -136,7 +145,7 @@ def _running_avg(parsed):
             parsed["ann_solar_volume"] = runn["run_solar_export"]
     return Bill(dict(parsed))()
 
-def _store_data(priced, request, res, nb_offers, ranking, upload_id):
+def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers):
     ip = request.remote_addr
     provider = request.form.get("provider")
     email = request.form.get("email")
@@ -155,8 +164,15 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id):
     except Exception as ex:
         print("CANNOT STORE USER PARAMETERS FROM BILL")
         print(ex)
-    populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id=customer)
-    copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf",BILLS_BUCKET, key_file)
+    populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id=customer,nb_retailers=nb_retailers)
+    message = "saving" if len(res) else "no_saving"
+    _update_upload(
+        upload_id = upload_id,
+        customer_id= customer,
+        bill_id_to_date= bill_id(priced),
+        message = message
+    )
+    copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BILLS_BUCKET, key_file)
 
 def _process_upload_miswitch(request, local_file, file_name):
     email = request.form.get("email")
@@ -180,50 +196,58 @@ def _process_upload_miswitch(request, local_file, file_name):
     except Exception as ex:
         print(ex)
 
-def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking):
-    message = "saving" if len(res) else "no saving"
-    res = annomyze_offers(res)
-    result = {
-        "upload_id": upload_id,
-        "evaluated": nb_offers,
-        "ranking": ranking,
-        "nb_retailers": nb_retailers,
-        "bests": res,
-        "bill": priced,
-        "message": message}
-    result = json.dumps(result, indent=4)
-    return result
-
 def _get_bests(upload_id, priced, file_name, is_business):
     try:
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-        try :
-            _store_data(priced, request, res, nb_offers, ranking,upload_id)
-        except Exception as ex:
-            print(ex)
+        _store_data(priced, request, res, nb_offers, ranking, upload_id, nb_retailers)
         return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking)
     except Exception as ex:
         print(ex)
         return bad_results("bad_best_offers", file=None, file_name=file_name, upload_id=upload_id)
 
-@app.route("/get-upload-id", methods=["GET"])
-def upload_id():
-    result = {"upload_id": f"bill-{uuid.uuid1()}"}
-    result = json.dumps(result)
-    return result, 200
+def _store_upload(upload_id, file_name, checksum, message, provider, src=None):
+    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+    if not src: src = "anonymous"
+
+    item = {
+        "upload_id": upload_id,
+        "creation_date": creation_date,
+        "file_name": file_name,
+        "message": message,
+        "provider": provider,
+        "checksum": checksum,
+        "from": src
+    }
+    upload_table.put_item(Item=item)
+
+def _update_upload(upload_id, customer_id, bill_id_to_date, message):
+    key = {"upload_id": upload_id}
+    upload_table.update_item(
+        Key=key,
+        UpdateExpression="set customer_id=:customer_id,bill_id_to_date=:bill_id_to_date,message=:message",
+        ExpressionAttributeValues= {
+            ':customer_id': customer_id,
+            ':bill_id_to_date': bill_id_to_date,
+            ':message': message
+        }, ReturnValues="UPDATED_NEW"
+    )
 
 @app.route("/upload-file", methods=["POST"])
 def upload_file():
-    upload_id = request.form.get("upload_id")
+    upload_id = f"bill-{uuid.uuid1()}"
     file_obj = request.files.get("pdf")
     file_name = file_obj.filename
     pdf_data = file_obj.read()
+    checksum = hashlib.md5(pdf_data).hexdigest()
     local_file = f"/tmp/{upload_id}.pdf"
     with open(local_file, "wb") as out:
         out.write(pdf_data)
     key_file = f"upload/{upload_id}.pdf"
     s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=local_file, Key=key_file)
     is_bill, message = Extractor.check_bill(local_file)
+    if is_bill: message = "success"
+    provider = request.remote_addr
+    _store_upload(upload_id, file_name, checksum, message, provider=provider)
     if not is_bill:
         if "scanned" in message:
             res, parsed = scanned_priced(pdf_data)
@@ -231,14 +255,12 @@ def upload_file():
                 return bad_results(parsed, file=local_file, file_name=file_name, upload_id=upload_id)
         else:
             return bad_results(message, file=local_file, file_name=file_name, upload_id=upload_id)
-    result = {"upload_id": upload_id,
-              "message": "success"}
+    result = {"upload_id": upload_id, "message": "success"}
     result = json.dumps(result)
     return result, 200
 
-
-@app.route("/bests-upload", methods=["POST"])
-def bests_upload():
+@app.route("/search-upload-bests", methods=["POST"])
+def search_upload_bests():
     upload_id = request.form.get("upload_id")
     local_file = f"/tmp/{upload_id}.pdf"
     key_file = f"upload/{upload_id}.pdf"
@@ -253,6 +275,22 @@ def bests_upload():
     _process_upload_miswitch(request, local_file, file_name)
     return result, 200
 
+@app.route("/retrieve-upload-bests", methods=["POST"])
+def retrieve_upload_bests():
+    upload_id = request.form.get("upload_id")
+    try:
+        response = upload_table.query(
+            KeyConditionExpression='upload_id=:id',
+            ExpressionAttributeValues=
+            {':id': upload_id,
+             }
+        )
+        items = response['Items']
+        if items:
+            x = items[0]
+            return retrive_bests_by_id(x["customer_id"], x["bill_id_date"], upload_id)
+    except Exception as ex:
+        print(ex)
 
 @app.route("/bests", methods=["POST"])
 def bests():
@@ -326,8 +364,8 @@ def bests():
             print(ex)
             return bad_results("bad_best_offers", file=id, file_name=file_name, upload_id=upload_id)
 
-        key_file = bill_file_name(priced)
-        customer = user_id()
+        customer = user_id(priced)
+        key_file = bill_file_name(priced, customer)
         try:
             populate_bill_users(priced, provider, customer, ip, user_email, user_name)
         except Exception as ex:
@@ -372,7 +410,6 @@ def bests():
         result = json.dumps(result, indent=4)
         return result, 200
 
-
 @app.route("/confirmSignup", methods=["GET"])
 def confirmSignUp():
     user_name = request.args.get('username')
@@ -391,3 +428,4 @@ def confirmSignUp():
         result = {"confirmed": False}
 
     return result, 200
+

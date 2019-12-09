@@ -42,12 +42,13 @@ free:
   runtime: python3.6
   s3_bucket: intelligibill-dev
   domain: free.beatyourbill.com.au
-  log_level: DEBUG
+  log_level: ERROR
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   cors: yes
   environment_variables:
     users_bill_table: bill_users_free
     bests_offers_table: bests_offers_free
+    upload_table: upload_free
     bills-bucket: myswitch-bills-bucket
     switch-bucket: switch-markintell
     feedback_list: contact@ag-study.com
@@ -88,6 +89,7 @@ prodfree:
   environment_variables:
     users_bill_table: bill_users_prod_free
     bests_offers_table: bests_offers_prod_free
+    upload_table: upload_prod_free
     bills-bucket: beatyourbill-bucket
     switch-bucket: byb-markintell
     source-bill: BYB

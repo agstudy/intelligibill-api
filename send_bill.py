@@ -60,7 +60,7 @@ def send_feedback(bill_file,message,user_):
 def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None):
     SENDER = "BeatYourBill <contact@beatyourbill.com.au>"
     AWS_REGION = "us-east-1"
-    if user_=="anonynous":
+    if user_=="anonymous":
         user_ = {"user_name": "anonymous_name", "user_email": "anonymous_email"}
 
     if to:

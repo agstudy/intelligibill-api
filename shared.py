@@ -3,6 +3,18 @@ import json
 import boto3
 import os
 import decimal
+from botocore.exceptions import ClientError
+import json
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            if o % 1 > 0:
+                return float(o)
+            else:
+                return int(o)
+        return super(DecimalEncoder, self).default(o)
+
 
 dynamodb = boto3.resource('dynamodb')
 best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
@@ -61,7 +73,7 @@ def annomyze_offers(offers):
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
-def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_id):
+def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_id,nb_retailers=0):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
 
     saving = -1;
@@ -83,7 +95,8 @@ def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_i
         'spot_date': spot_date,
         'bests': bests,
         'priced': priced,
-        'tracking': tracking
+        'tracking': tracking,
+        'nb_retailers': nb_retailers
     }
     item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
     print(item)
@@ -132,4 +145,41 @@ def copy_object(src_bucket_name, src_object_name,
     s3.copy_object(CopySource=copy_source, Bucket=dest_bucket_name,
                        Key=dest_object_name)
 
+
+
+def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking):
+    message = "saving" if len(res) else "no saving"
+    res = annomyze_offers(res)
+    result = {
+        "upload_id": upload_id,
+        "evaluated": nb_offers,
+        "ranking": ranking,
+        "nb_retailers": nb_retailers,
+        "bests": res,
+        "bill": priced,
+        "message": message}
+    result = json.dumps(result, indent=4, cls=DecimalEncoder)
+    return result
+
+
+
+def retrive_bests_by_id(customer_id, bill_id, upload_id):
+    try:
+        response = best_offers_table.query(
+            KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
+            ExpressionAttributeValues=
+            {':id': customer_id,
+             ':bill_id': bill_id
+             }
+        )
+        items = response['Items']
+        if items:
+            x = items[0]
+            r = x["tracking"]
+            result = _create_best_result(x["bests"],upload_id,r["evaluated"],
+                                         x.get("nb_retailers"),x["priced"],r["ranking"])
+            return result, 200
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
 

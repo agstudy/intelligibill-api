@@ -307,7 +307,7 @@ def bests():
             print("CANNOT STORE USER PARAMETERS FROM BILL")
             print(ex)
 
-        populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id= user_id())
+        populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id= user_id(),nb_retailers=nb_retailers)
         s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
         s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
         os.remove(id)
