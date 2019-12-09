@@ -5,6 +5,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from zappa.asynchronous import task
+s3_resource = boto3.resource('s3')
+BILLS_BUCKET = os.environ.get('bills-bucket')
+
 
 
 feedback_list = os.environ.get('feedback_list')
@@ -54,9 +57,11 @@ def send_feedback(bill_file,message,user_):
 
 
 @task
-def send_ses_bill(bill_file,user_,user_message, to=None):
+def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None):
     SENDER = "BeatYourBill <contact@beatyourbill.com.au>"
     AWS_REGION = "us-east-1"
+    if user_=="anonynous":
+        user_ = {"user_name": "anonymous_name", "user_email": "anonymous_email"}
 
     if to:
         RECIPIENT = to
@@ -101,6 +106,10 @@ def send_ses_bill(bill_file,user_,user_message, to=None):
     htmlpart = MIMEText(BODY_HTML.encode(CHARSET), 'html', CHARSET)
     msg_body.attach(htmlpart)
     msg.attach(msg_body)
+    if upload_id:
+        bill_file = f"/tmp/{upload_id}.pdf"
+        key_file = f"upload/{upload_id}.pdf"
+        s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=bill_file, Key=key_file)
 
     if bill_file:
         ATTACHMENT = bill_file

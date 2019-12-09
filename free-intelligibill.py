@@ -40,13 +40,14 @@ SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
 BAD_BILLS_BUCKET = "ib-bad-bills"
 
 
-def user_id():
-    return f"anonymous-{uuid.uuid1()}"
+def user_id(priced):
+    name = priced.get("name")
+    if not name : name = "anonymous"
+    nmi = priced["users_nmi"].lower()
+    return f"""{nmi}-{name.lower().replace(" ","")}"""
 
-
-def bill_file_name(priced):
-    return f"private/{user_id()}/{bill_id(priced)}.pdf"
-
+def bill_file_name(priced, user):
+    return f"private/{user}/{bill_id(priced)}.pdf"
 
 def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
     def user_message(argument):
@@ -72,10 +73,12 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
         return switcher.get(argument, message)
 
     message = user_message(message)
-    if file:
+    if upload_id:
+        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{upload_id}.pdf")
+        send_ses_bill(bill_file=None, user_="anonymous", user_message=message,upload_id = upload_id)
+    elif file:
         s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
-        user_ = {"user_name": "anonymous_name", "user_email": "anonymous_email"}
-        send_ses_bill(file, user_, message)
+        send_ses_bill(bill_file=file, user_="anonymous", user_message=message)
 
     return jsonify(
         {
@@ -85,7 +88,6 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
             'bill': priced,
             "message": message
         }), 200
-
 
 def scanned_priced(pdf_file):
     ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
@@ -99,8 +101,6 @@ def scanned_priced(pdf_file):
         print(ex)
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         return False, f"This is a scanned bill.\n{bad_message}"
-
-
 
 def _parse_upload(local_file, file_name, upload_id):
     Extractor.process_pdf(local_file)
@@ -148,8 +148,8 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id):
         user_email = "anonymous_email"
         user_name = "anonymous_name"
 
-    key_file = bill_file_name(priced)
-    customer = user_id()
+    customer = user_id(priced)
+    key_file = bill_file_name(priced, customer)
     try:
         populate_bill_users(priced, provider, customer, ip, user_email, user_name)
     except Exception as ex:
@@ -194,23 +194,23 @@ def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking
     result = json.dumps(result, indent=4)
     return result
 
-def _get_bests(upload_id, priced, local_file, file_name, is_business):
+def _get_bests(upload_id, priced, file_name, is_business):
     try:
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-        _store_data(priced, request, res, nb_offers, ranking,upload_id)
+        try :
+            _store_data(priced, request, res, nb_offers, ranking,upload_id)
+        except Exception as ex:
+            print(ex)
         return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking)
     except Exception as ex:
         print(ex)
         return bad_results("bad_best_offers", file=None, file_name=file_name, upload_id=upload_id)
-
-
 
 @app.route("/get-upload-id", methods=["GET"])
 def upload_id():
     result = {"upload_id": f"bill-{uuid.uuid1()}"}
     result = json.dumps(result)
     return result, 200
-
 
 @app.route("/upload-file", methods=["POST"])
 def upload_file():
@@ -249,7 +249,7 @@ def bests_upload():
     status, parsed = _parse_upload(local_file, file_name, upload_id)
     if not status: return parsed
     priced = _running_avg(parsed)
-    result = _get_bests(upload_id, priced, local_file, file_name, is_business)
+    result = _get_bests(upload_id, priced, file_name, is_business)
     _process_upload_miswitch(request, local_file, file_name)
     return result, 200
 
