@@ -5,6 +5,7 @@ import os
 import decimal
 from botocore.exceptions import ClientError
 import json
+import re
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, o):
@@ -38,10 +39,6 @@ class BestDTO:
     origin_offer: {}
     frequency: float
     frequency_green: float
-
-
-
-
 
 def annomyze_offers(offers):
     for i, x in enumerate(offers):
@@ -145,8 +142,6 @@ def copy_object(src_bucket_name, src_object_name,
     s3.copy_object(CopySource=copy_source, Bucket=dest_bucket_name,
                        Key=dest_object_name)
 
-
-
 def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking):
     message = "saving" if len(res) else "no saving"
     res = annomyze_offers(res)
@@ -160,8 +155,6 @@ def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking
         "message": message}
     result = json.dumps(result, indent=4, cls=DecimalEncoder)
     return result
-
-
 
 def retrive_bests_by_id(customer_id, bill_id, upload_id):
     try:
@@ -183,3 +176,30 @@ def retrive_bests_by_id(customer_id, bill_id, upload_id):
         print(e.response['Error']['Message'])
         raise e
 
+def byb_temporary_user(user_email):
+
+    print("temporary user name is ", user_email)
+    cognito = boto3.client('cognito-idp')
+    response = cognito.list_users(
+        UserPoolId='ap-southeast-2_IG69RgQQJ',
+        Filter=f'username="{user_email}"'
+    )
+
+    if len(response.get("Users")):
+        return f"User {user_email} already exists"
+
+    cognito = boto3.client('cognito-idp')
+    response = cognito.admin_create_user(
+        Username= user_email,
+        UserPoolId='ap-southeast-2_IG69RgQQJ',
+        TemporaryPassword= "passwordchange",
+        DesiredDeliveryMediums= ("EMAIL",),
+        UserAttributes=[
+            {
+                'Name': 'email',
+                'Value': user_email
+            },
+        ]
+    )
+
+    return f"User {user_email} is temorary created"

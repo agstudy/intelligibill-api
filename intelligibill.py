@@ -101,9 +101,9 @@ def paid_customer(nmi):
     response = users_paid_table.get_item(Key={'nmi': nmi})
     if 'Item' in response:
         item = response["Item"]
-        user_nmae = coginto_user()["user_name"]
-        if item["username"] != user_nmae:
-            return {"is_paid": False}
+        user_name = coginto_user()["user_name"]
+        if item["user_name"] != user_name:
+           return {"is_paid": False}
 
         if "charge_id" in item:
             charge_id = response["Item"]["charge_id"]
@@ -250,7 +250,6 @@ def bill_pdf():
 @app.route("/bests", methods=["POST"])
 def bests():
     ip = request.remote_addr
-
     file_obj = request.files.get("pdf")
     pdf_data = file_obj.read()
     is_business = request.form.get("is_business")
@@ -285,7 +284,6 @@ def bests():
                 return bad_results("embedded")
 
         history = get_history('beatyourbill-bucket', parsed["users_nmi"])
-        history.append(parsed)
         if history:
             runn = RunAvg(history).running_parameters()
             curr = RunAvg([parsed]).running_parameters()
@@ -293,9 +291,9 @@ def bests():
             for k, v in parsed.items():
                 if "_usage" in k:
                     parsed[k] = round(v * ann_factor)
-            if parsed["has_solar"]:
-                parsed["ann_solar_volume"] = runn["run_solar_export"]
             priced = Bill(dict(parsed))()
+            if priced["has_solar"] and history:
+                priced["ann_solar_export"] = runn["run_solar_export"]
 
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
         key_file = bill_file_name(priced)
@@ -323,8 +321,7 @@ def bests():
             result = json.dumps(result, indent=4)
             return result, 200
         nmi = priced["users_nmi"]
-        if not paid_customer(nmi)["is_paid"]:
-            res = annomyze_offers(res)
+        if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
         result = {
             "evaluated": nb_offers,
             "ranking": ranking,
@@ -344,8 +341,8 @@ def bests_single():
     res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
     if not len(res):
         return bad_results("no saving", priced)
-    res = annomyze_offers(priced, res)
-
+    nmi = priced["users_nmi"]
+    if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
     result = {"evaluated": nb_offers,
               "ranking": ranking,
               "nb_retailers": 1,
@@ -366,8 +363,8 @@ def reprice():
     update_bests_offers(res, priced, nb_offers, ranking)
     if not len(res):
         return bad_results("no saving", priced)
-
-    res = annomyze_offers(priced, res)
+    nmi = parsed["users_nmi"]
+    if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
     return jsonify(
         {"evaluated": nb_offers,
          "ranking": ranking,
@@ -421,8 +418,8 @@ def tracker_detail():
         items = response['Items']
         if items:
             x = items[0]
-            bests = annomyze_offers( x["bests"])
-            result = {"bests": bests, "bill": x["priced"]}
+            if not paid_customer(nmi)["is_paid"]: annomyze_offers( x["bests"])
+            result = {"bests": x["bests"] , "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200
     except ClientError as e:
@@ -472,7 +469,6 @@ def charge_client():
 
     nmi = params.get("nmi")
     user_ = coginto_user()
-    print(f"/payment/charge token is {token}")
     customer = stripe.Customer.create(
         email=user_["user_email"],
         source=token,

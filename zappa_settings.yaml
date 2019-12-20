@@ -21,7 +21,7 @@ dev:
     users_bill_table: bill_users
     bests_offers_table: bests_offers
     bills-bucket: myswitch-bills-bucket
-    stripe.api_key: pk_test_3mpYOKNl4G2IKUYX7SvGAgLh
+    stripe.api_key: sk_test_EDPh8yO3Gq39BXTRBlKWZdjj00seur9SJj
     coupon: "BYB_TRIAL"
     source-bill: IB
     switch-bucket: switch-markintell

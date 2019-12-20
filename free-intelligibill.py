@@ -42,19 +42,20 @@ SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
 BAD_BILLS_BUCKET = "ib-bad-bills"
 
 
-def user_id(priced):
-    name = priced.get("name")
-    if not name:
-        name = "anonymous"
+def user_id(priced, email=None):
+    if email :
+        name = email
     else:
-        name = name.lower().split()[-1]
+        name = priced.get("name")
+        if not name:
+            name = "anonymous"
+        else:
+            name = name.lower().split()[-1]
     nmi = priced["users_nmi"].lower()
     return f"""{nmi}-{name}"""
 
-
 def bill_file_name(priced, user):
     return f"private/{user}/{bill_id(priced)}.pdf"
-
 
 def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
     def user_message(argument):
@@ -96,7 +97,6 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
             "message": message
         }), 200
 
-
 def scanned_priced(pdf_file):
     ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
     try:
@@ -109,7 +109,6 @@ def scanned_priced(pdf_file):
         print(ex)
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         return False, f"This is a scanned bill.\n{bad_message}"
-
 
 def _parse_upload(local_file, file_name, upload_id):
     Extractor.process_pdf(local_file)
@@ -157,7 +156,7 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
         user_email = "anonymous_email"
         user_name = "anonymous_name"
 
-    customer = user_id(priced)
+    customer = user_id(priced, email)
     key_file = bill_file_name(priced, customer)
     try:
         populate_bill_users(priced, provider, customer, ip, user_email, user_name)
@@ -281,9 +280,7 @@ def retrieve_upload_bests():
     try:
         response = upload_table.query(
             KeyConditionExpression='upload_id=:id',
-            ExpressionAttributeValues=
-            {':id': upload_id,
-             }
+            ExpressionAttributeValues= {':id': upload_id}
         )
         items = response['Items']
         if items:

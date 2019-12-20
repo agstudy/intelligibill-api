@@ -12,6 +12,8 @@ from email.mime.text import MIMEText
 from botocore.exceptions import ClientError
 from send_bill import send_ses_bill
 from tempfile import NamedTemporaryFile
+from shared import byb_temporary_user
+import re
 
 
 
@@ -201,6 +203,8 @@ def parse_send_email(file_name):
     with open(file_name) as f:
         msg = email.message_from_file(f)
         From = msg["from"].strip()
+        match = re.search(r'[\w\.-]+@[\w\.-]+', From)
+        user_email = match.group()
         attachments = msg.get_payload()
         for attachment in attachments:
             try:
@@ -208,11 +212,15 @@ def parse_send_email(file_name):
                 bill_name = attachment.get_filename()
                 print("email attachment bill is ", bill_name)
                 if bill_name:
-                    byb_url = " https://prodfree.beatyourbill.com.au/bests"
-                    r = requests.post(byb_url, files={'pdf': file_bytes}, data = {"email": From, "provider":"email"})
+                    byb_url = " https://prodfree.beatyourbill.com.au"
+                    r = requests.post(f"{byb_url}/upload-file", files={'pdf': file_bytes})
+                    res = json.loads(r.content)
+                    r = requests.post(f"{byb_url}/search-upload-bests",
+                                      data = {"upload_id":res.get("upload_id"),"email": user_email, "provider":"email"})
                     res = json.loads(r.content)
                     msg = res.get('message')
                     if msg == "saving":
+                        byb_temporary_user(user_email)
                         ei = create_email(res)
                         send_result_email(From, ei.email_body, ei.saving)
                     else:
