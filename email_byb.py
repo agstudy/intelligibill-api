@@ -126,7 +126,7 @@ def populateHeader(saving, text=None):
     return BeautifulSoup(noSavingText, 'html.parser')
 
 
-def create_email(r):
+def create_email(r, user_email, force_change):
     ei = EmailInput()
 
     ei.username = r["bill"]["name"]
@@ -141,9 +141,9 @@ def create_email(r):
             sr.offer_total_bill = x["offer_total_bill"]
             sr.saving = x["saving"]
             sr.retailer_img = x["retailer"].lower().split(" ", 1)[0]
-            if "retalier" in x["retailer"].lower():
-                sr.retailer_img = "retalier"
-                sr.retailer_name.replace("etalier", "etailer")
+            if "retailer" in x["retailer"].lower():
+                sr.retailer_img = "retailer"
+##                sr.retailer_name.replace("etalier", "etailer")
 
             ei.saving_results.append(sr)
         with open("email.html") as template:
@@ -158,6 +158,9 @@ def create_email(r):
         user_name = soup.find(class_="username")
         user_name.append(BeautifulSoup(ei.username, "html.parser"))
         cta_message = soup.find(class_="cta_message")
+        if force_change:
+            url_= f"https://www.beatyourbill.com.au/login?user={user_email}&pwd=passwordchange"
+            cta_message["href"] = url_
         cta_message.clear()
         cta_message.append(BeautifulSoup(ei.cta, "html.parser"))
 
@@ -199,6 +202,35 @@ def send_result_email(to, body_html, saving):
         print(response['MessageId'])
 
 
+def process_attachment(attachment, user_email):
+    file_bytes = attachment.get_payload(decode=True, )
+    bill_name = attachment.get_filename()
+    customer, force_change = byb_temporary_user(user_email)
+
+    print("email attachment bill is ", bill_name)
+    if bill_name:
+        byb_url = " https://prodfree.beatyourbill.com.au"
+        r = requests.post(f"{byb_url}/upload-file",
+                          files={'pdf': file_bytes},
+                          data = { "customer":customer})
+        res = json.loads(r.content)
+        r = requests.post(f"{byb_url}/search-upload-bests",
+                          data={"upload_id": res.get("upload_id"),
+                                "email": user_email,
+                                "customer":customer,
+                                "provider": "email"})
+        res = json.loads(r.content)
+        msg = res.get('message')
+        if msg == "saving":
+            ei = create_email(res, user_email, force_change)
+            send_result_email(user_email, ei.email_body, ei.saving)
+        else:
+            with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+                out.write(file_bytes)
+                user_ = {"user_name": user_email, "user_email": user_email}
+                send_ses_bill(out.name, user_, msg, to=[user_email])
+
+
 def parse_send_email(file_name):
     with open(file_name) as f:
         msg = email.message_from_file(f)
@@ -207,31 +239,7 @@ def parse_send_email(file_name):
         user_email = match.group()
         attachments = msg.get_payload()
         for attachment in attachments:
-            try:
-                file_bytes = attachment.get_payload(decode=True, )
-                bill_name = attachment.get_filename()
-                print("email attachment bill is ", bill_name)
-                if bill_name:
-                    byb_url = " https://prodfree.beatyourbill.com.au"
-                    r = requests.post(f"{byb_url}/upload-file", files={'pdf': file_bytes})
-                    res = json.loads(r.content)
-                    r = requests.post(f"{byb_url}/search-upload-bests",
-                                      data = {"upload_id":res.get("upload_id"),"email": user_email, "provider":"email"})
-                    res = json.loads(r.content)
-                    msg = res.get('message')
-                    if msg == "saving":
-                        byb_temporary_user(user_email)
-                        ei = create_email(res)
-                        send_result_email(From, ei.email_body, ei.saving)
-                    else:
-                        id = f"/tmp/{uuid.uuid1()}.pdf"
-                        with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
-                            out.write(file_bytes)
-                            user_ = {"user_name": From, "user_email": From}
-                            send_ses_bill(out.name, user_, msg, to= [From])
-            except Exception as detail:
-                print(detail)
-                pass
+            process_attachment(attachment, user_email)
 
 
 def process_new_email(event, context):
@@ -249,7 +257,7 @@ def process_new_email(event, context):
 
 
 if __name__ == '__main__':
-    file_name = "/home/agstudy/Downloads/2rkih1mue32bif2llctqf1k1470946svucbobeo1"
+    file_name = "/home/agstudy/Downloads/bruce_email_byb_ikobat"
 
     ## file_name = "/home/agstudy/Downloads/example_mail"
     parse_send_email(file_name)

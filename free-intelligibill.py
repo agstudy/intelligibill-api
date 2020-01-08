@@ -148,6 +148,7 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     ip = request.remote_addr
     provider = request.form.get("provider")
     email = request.form.get("email")
+    customer = request.form.get("customer")
 
     if email:
         user_email = email
@@ -155,8 +156,8 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     else:
         user_email = "anonymous_email"
         user_name = "anonymous_name"
-
-    customer = user_id(priced, email)
+    if not customer:
+        customer = user_id(priced, email)
     key_file = bill_file_name(priced, customer)
     try:
         populate_bill_users(priced, provider, customer, ip, user_email, user_name)
@@ -217,6 +218,9 @@ def _store_upload(upload_id, file_name, checksum, message, provider, src=None):
         "checksum": checksum,
         "from": src
     }
+    customer = request.form.get("customer")
+    if customer:
+        item.update({"customer":customer})
     upload_table.put_item(Item=item)
 
 def _update_upload(upload_id, customer_id, bill_id_to_date, message):

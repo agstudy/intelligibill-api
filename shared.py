@@ -18,9 +18,17 @@ class DecimalEncoder(json.JSONEncoder):
 
 
 dynamodb = boto3.resource('dynamodb')
+
+# local = True
+# if local :
+#     best_offers_table = dynamodb.Table('bests_offers')
+#     users_bill_table = dynamodb.Table('bill_users')
+# else:
+#     best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
+#     users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
+
 best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
 users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
-
 
 
 class BestDTO:
@@ -176,9 +184,7 @@ def retrive_bests_by_id(customer_id, bill_id, upload_id):
         print(e.response['Error']['Message'])
         raise e
 
-def byb_temporary_user(user_email):
-
-    print("temporary user name is ", user_email)
+def _user_exists(user_email):
     cognito = boto3.client('cognito-idp')
     response = cognito.list_users(
         UserPoolId='ap-southeast-2_IG69RgQQJ',
@@ -186,14 +192,27 @@ def byb_temporary_user(user_email):
     )
 
     if len(response.get("Users")):
-        return f"User {user_email} already exists"
+        user = response.get("Users")
+        for x in user[0]["Attributes"]:
+            if x["Name"]=="sub":
+                return True, x["Value"],user[0]["UserStatus"] =="FORCE_CHANGE_PASSWORD"
+    else:
+        return False, None, None
 
+def byb_temporary_user(user_email):
+
+    print("temporary user name is ", user_email)
+    exists, sub, force_change = _user_exists(user_email)
+    if exists:
+
+        return sub, force_change
     cognito = boto3.client('cognito-idp')
     response = cognito.admin_create_user(
         Username= user_email,
         UserPoolId='ap-southeast-2_IG69RgQQJ',
         TemporaryPassword= "passwordchange",
-        DesiredDeliveryMediums= ("EMAIL",),
+        ## DesiredDeliveryMediums= ("",),
+        MessageAction ="SUPPRESS",
         UserAttributes=[
             {
                 'Name': 'email',
@@ -201,5 +220,11 @@ def byb_temporary_user(user_email):
             },
         ]
     )
+    exists, sub, force_change = _user_exists(user_email)
+    if exists:
+        return sub, force_change
 
-    return f"User {user_email} is temorary created"
+
+if __name__=='__main__':
+    res = byb_temporary_user("contact@ikobat.com")
+    print(res)

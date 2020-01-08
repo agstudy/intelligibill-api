@@ -46,8 +46,8 @@ free:
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   cors: yes
   environment_variables:
-    users_bill_table: bill_users_free
-    bests_offers_table: bests_offers_free
+    users_bill_table: bill_users
+    bests_offers_table: bests_offers
     upload_table: upload_free
     bills-bucket: myswitch-bills-bucket
     switch-bucket: switch-markintell
@@ -87,13 +87,13 @@ prodfree:
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   cors: yes
   environment_variables:
-    users_bill_table: bill_users_prod_free
-    bests_offers_table: bests_offers_prod_free
+    users_bill_table: bill_users_prod
+    bests_offers_table: bests_offers_prod
     upload_table: upload_prod_free
     bills-bucket: beatyourbill-bucket
     switch-bucket: byb-markintell
     source-bill: BYB
-    feedback_list: contact@ag-study.com, bruce.mountain@cmeaustralia.com.au
+    feedback_list: contact@ag-study.com
   events:
   - function: intelligibill.process_upload_miswitch
     event_source:
