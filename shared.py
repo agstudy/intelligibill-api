@@ -6,6 +6,7 @@ import decimal
 from botocore.exceptions import ClientError
 import json
 import re
+from boto3.dynamodb.conditions import Key
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, o):
@@ -19,16 +20,16 @@ class DecimalEncoder(json.JSONEncoder):
 
 dynamodb = boto3.resource('dynamodb')
 
-# local = True
-# if local :
-#     best_offers_table = dynamodb.Table('bests_offers')
-#     users_bill_table = dynamodb.Table('bill_users')
-# else:
-#     best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
-#     users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
+local = True
+if local :
+    best_offers_table = dynamodb.Table('bests_offers_prod')
+    users_bill_table = dynamodb.Table('bill_users_prod')
+else:
+    best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
+    users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 
-best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
-users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
+# best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
+# users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 
 
 class BestDTO:
@@ -80,7 +81,7 @@ def bill_id(priced):
 
 def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_id,nb_retailers=0):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-
+    print("best offer is is: ", customer_id)
     saving = -1;
     if len(bests):
         saving = bests[0]["saving"]
@@ -104,7 +105,6 @@ def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_i
         'nb_retailers': nb_retailers
     }
     item = json.loads(json.dumps(item), parse_float=decimal.Decimal)
-    print(item)
     if customer_id:
         best_offers_table.put_item(Item=item)
 
@@ -204,7 +204,6 @@ def byb_temporary_user(user_email):
     print("temporary user name is ", user_email)
     exists, sub, force_change = _user_exists(user_email)
     if exists:
-
         return sub, force_change
     cognito = boto3.client('cognito-idp')
     response = cognito.admin_create_user(
@@ -226,5 +225,17 @@ def byb_temporary_user(user_email):
 
 
 if __name__=='__main__':
-    res = byb_temporary_user("contact@ikobat.com")
-    print(res)
+    customer_id = "1d758e80-5d71-45e2-bd9e-4a03b2c33687"
+    response = best_offers_table.query(
+        KeyConditionExpression=Key('customer_id').eq(customer_id),
+        ProjectionExpression="priced.users_nmi, priced.address"
+    )
+    items = response['Items']
+    keys = set()
+    result = []
+    for x in items:
+        if not x["priced"]["users_nmi"] in keys:
+            result.append(x["priced"])
+        keys.add(x["priced"]["users_nmi"])
+    from pprint import pprint
+    pprint(result)

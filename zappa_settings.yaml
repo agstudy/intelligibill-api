@@ -33,7 +33,6 @@ dev:
       events:
       - s3:ObjectCreated:*
 
-
 free:
   app_function: free-intelligibill.app
   aws_region: ap-southeast-2
@@ -59,21 +58,6 @@ free:
       arn: arn:aws:s3:::switch-markintell
       events:
       - s3:ObjectCreated:*
-
-blog:
-  app_function: blog-byb.app
-  aws_region: ap-southeast-2
-  profile_name: default
-  project_name: byb-blog
-  runtime: python3.6
-  s3_bucket: byb-bucket-blog
-  domain: blog.beatyourbill.com.au
-  log_level: ERROR
-  certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
-  cors: yes
-  environment_variables:
-    blog-bucket: blog-content-byb
-
 
 prodfree:
   app_function: free-intelligibill.app

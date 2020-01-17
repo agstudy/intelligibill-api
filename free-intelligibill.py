@@ -36,7 +36,6 @@ dynamodb = boto3.resource('dynamodb')
 best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
 users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 upload_table = dynamodb.Table(os.environ.get('upload_table'))
-
 BILLS_BUCKET = os.environ.get('bills-bucket')
 SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
 BAD_BILLS_BUCKET = "ib-bad-bills"
@@ -149,6 +148,10 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     provider = request.form.get("provider")
     email = request.form.get("email")
     customer = request.form.get("customer")
+    if not customer :
+        customer = request.headers.get('user_id')
+    if not customer:
+        customer = user_id(priced, email)
 
     if email:
         user_email = email
@@ -156,8 +159,6 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     else:
         user_email = "anonymous_email"
         user_name = "anonymous_name"
-    if not customer:
-        customer = user_id(priced, email)
     key_file = bill_file_name(priced, customer)
     try:
         populate_bill_users(priced, provider, customer, ip, user_email, user_name)

@@ -642,9 +642,18 @@ def nmis():
 
 # We only need this for local development.
 if __name__ == '__main__':
-    import yaml
 
-    with open('zappa_settings.yaml') as json_data:
-        env_vars = yaml.load(json_data, Loader=yaml.FullLoader)['api']['environment_variables']
-        for key, val in env_vars.items():
-            print(key, val)
+    customer_id = "1d758e80-5d71-45e2-bd9e-4a03b2c33687"
+    response = best_offers_table.query(
+        KeyConditionExpression=Key('customer_id').eq(customer_id),
+        ProjectionExpression="priced.users_nmi, priced.address"
+    )
+    items = response['Items']
+    keys = set()
+    result = []
+    for x in items:
+        if not x["priced"]["users_nmi"] in keys:
+            result.append(x["priced"])
+        keys.add(x["priced"]["users_nmi"])
+
+    print(results)
