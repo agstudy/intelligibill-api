@@ -246,11 +246,15 @@ def bill_pdf():
 
 @app.route("/bests", methods=["POST"])
 def bests():
-    result ,statut = manage_bill_upload()
+    file_obj = request.files.get("pdf")
+    result ,statut = manage_bill_upload(file_obj)
+    print("result is :" , result)
+    print(statut)
     if statut==200:
         result = json.loads(result)
         result ,statut = get_upload_bests(result["upload_id"])
     return result, statut
+
 
 @app.route("/bests2", methods=["POST"])
 def bests2():

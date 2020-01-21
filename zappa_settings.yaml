@@ -76,6 +76,7 @@ prodfree:
     users_bill_table: bill_users_prod
     bests_offers_table: bests_offers_prod
     upload_table: upload_prod_free
+    users_paid_table: paid_users_prod
     bills-bucket: beatyourbill-bucket
     switch-bucket: byb-markintell
     source-bill: BYB
@@ -114,6 +115,7 @@ api:
     users_paid_table: paid_users_prod
     users_bill_table: bill_users_prod
     bests_offers_table: bests_offers_prod
+    upload_table: upload_prod_free
     bills-bucket: beatyourbill-bucket
     stripe.api_key: sk_live_WmTIpxRkckTGpFwhmhz7uZgb00mbMl7tW3
     coupon: "SOLAR_ANALYTICS_STUFF"
