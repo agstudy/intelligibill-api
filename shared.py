@@ -1,12 +1,19 @@
 from datetime import datetime
-import json
 import boto3
-import os
 import decimal
-from botocore.exceptions import ClientError
 import json
-import re
 from boto3.dynamodb.conditions import Key
+from flask import jsonify
+from cts import users_paid_table, COGNITO_POOL_ID
+import stripe
+from cts import BILLS_BUCKET, BAD_BILLS_BUCKET, best_offers_table, users_bill_table
+from send_bill import send_ses_bill
+from flask import request
+
+
+s3_resource = boto3.resource('s3')
+cognito = boto3.client('cognito-idp')
+
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, o):
@@ -16,20 +23,6 @@ class DecimalEncoder(json.JSONEncoder):
             else:
                 return int(o)
         return super(DecimalEncoder, self).default(o)
-
-
-dynamodb = boto3.resource('dynamodb')
-
-local = True
-if local :
-    best_offers_table = dynamodb.Table('bests_offers_prod')
-    users_bill_table = dynamodb.Table('bill_users_prod')
-else:
-    best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
-    users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
-
-# best_offers_table = dynamodb.Table(os.environ.get('bests_offers_table'))
-# users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 
 
 class BestDTO:
@@ -48,6 +41,61 @@ class BestDTO:
     origin_offer: {}
     frequency: float
     frequency_green: float
+
+def is_disconnected():
+   return request.headers.get('user_id') is None
+
+def coginto_user():
+    sub= request.headers.get('user_id')
+    response = cognito.list_users(
+        UserPoolId=COGNITO_POOL_ID,
+        AttributesToGet=[
+            'email',
+        ],
+        Filter=f'sub="{sub}"'
+    )
+    user_ = response["Users"][0]
+    user_name = user_["Username"]
+    user_email = ""
+    for x in user_["Attributes"]:
+        if x["Name"] == "email":
+            user_email = x["Value"]
+    return {"user_name": user_name,
+            "user_email": user_email}
+
+def paid_customer(nmi):
+    user_name = coginto_user()
+    if not user_name:
+        return {"is_paid": False}
+    else:
+        user_name = user_name["user_name"]
+    response = users_paid_table.get_item(Key={'nmi': nmi})
+    if not 'Item' in response:
+        return {"is_paid": False}
+    item = response["Item"]
+    if item["user_name"] != user_name:
+        return {"is_paid": False}
+
+    if "charge_id" in item:
+        charge_id = response["Item"]["charge_id"]
+        charge = stripe.Charge.retrieve(charge_id)
+        return {
+            "is_paid": charge["paid"],
+            "receipt": charge["receipt_url"],
+            "amount": charge["amount"] / 100,
+            "payment_date": item["creation_date"]
+        }
+    elif "coupon" in item:
+        payment = item["payment"]
+        return {
+            "is_paid": payment["paid"],
+            "receipt": payment["receipt_url"],
+            "amount": float(payment["amount"]),
+            "payment_date": item["creation_date"]
+        }
+
+def is_paid_customer(nmi):
+    return paid_customer(nmi)["is_paid"]
 
 def annomyze_offers(offers):
     for i, x in enumerate(offers):
@@ -79,9 +127,24 @@ def annomyze_offers(offers):
 def bill_id(priced):
     return (f"""{priced["users_nmi"]}_{priced["to_date"].replace("/","-")}""")
 
+def bill_file_name(priced, user):
+    return f"private/{user}/{bill_id(priced)}.pdf"
+
+
+def user_id(priced, email=None):
+    if email :
+        name = email
+    else:
+        name = priced.get("name")
+        if not name:
+            name = "anonymous"
+        else:
+            name = name.lower().split()[-1]
+    nmi = priced["users_nmi"].lower()
+    return f"""{nmi}-{name}"""
+
 def populate_bests_offers(bests, priced, nb_offers, ranking, key_file,customer_id,nb_retailers=0):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    print("best offer is is: ", customer_id)
     saving = -1;
     if len(bests):
         saving = bests[0]["saving"]
@@ -152,7 +215,11 @@ def copy_object(src_bucket_name, src_object_name,
 
 def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking):
     message = "saving" if len(res) else "no saving"
-    res = annomyze_offers(res)
+    nmi = priced["users_nmi"]
+
+    if is_disconnected() or not is_paid_customer(nmi):
+        res = annomyze_offers(res)
+
     result = {
         "upload_id": upload_id,
         "evaluated": nb_offers,
@@ -164,25 +231,7 @@ def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking
     result = json.dumps(result, indent=4, cls=DecimalEncoder)
     return result
 
-def retrive_bests_by_id(customer_id, bill_id, upload_id):
-    try:
-        response = best_offers_table.query(
-            KeyConditionExpression='customer_id=:id and bill_id_to_date=:bill_id',
-            ExpressionAttributeValues=
-            {':id': customer_id,
-             ':bill_id': bill_id
-             }
-        )
-        items = response['Items']
-        if items:
-            x = items[0]
-            r = x["tracking"]
-            result = _create_best_result(x["bests"],upload_id,r["evaluated"],
-                                         x.get("nb_retailers"),x["priced"],r["ranking"])
-            return result, 200
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        raise e
+
 
 def _user_exists(user_email):
     cognito = boto3.client('cognito-idp')
@@ -223,6 +272,46 @@ def byb_temporary_user(user_email):
     if exists:
         return sub, force_change
 
+
+def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
+    def user_message(argument):
+        switcher = {
+            "embedded": """
+                    Your are supplied on an embedded network. 
+                    Unfortunately you can not choose your supplier. 
+                    We are sorry we can not be useful to you.
+                  """,
+            "no_parsing": """
+                    We are sorry we could not read your bill. 
+                    Could you please check that it is an original PDF bill. 
+                    If the problem is on our side, we will fix it and let you know 
+                    if you have signed up with us
+                  """,
+            "bad_best_offers": """
+                            We are sorry we could not parse your bill very well. 
+                            Could you please check that it is an original PDF bill. 
+                            If the problem is on our side, we will fix it and let you know 
+                            if you have signed up with us
+                          """
+        }
+        return switcher.get(argument, message)
+
+    message = user_message(message)
+    if upload_id:
+        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{message}/{upload_id}.pdf")
+        send_ses_bill(bill_file=None, user_="anonymous", user_message=message, upload_id=upload_id)
+    elif file:
+        s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
+        send_ses_bill(bill_file=file, user_="anonymous", user_message=message)
+
+    return jsonify(
+        {
+            'upload_id': upload_id,
+            'bests': [],
+            'evaluated': -1,
+            'bill': priced,
+            "message": message
+        }), 200
 
 if __name__=='__main__':
     customer_id = "1d758e80-5d71-45e2-bd9e-4a03b2c33687"

@@ -44,14 +44,13 @@ SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
 BAD_BILLS_BUCKET = "ib-bad-bills"
 AMOUNT = 3000
 COGNITO_POOL_ID = "ap-southeast-2_IG69RgQQJ"
-
+from engine import manage_bill_upload, get_upload_bests
 
 def user_id():
     return request.headers.get('user_id')
 
 def coginto_user(sub=None):
-    if not sub:
-        sub = user_id()
+    if not sub: sub = user_id()
     response = cognito.list_users(
         UserPoolId=COGNITO_POOL_ID,
         AttributesToGet=[
@@ -65,9 +64,7 @@ def coginto_user(sub=None):
     for x in user_["Attributes"]:
         if x["Name"] == "email":
             user_email = x["Value"]
-    print(f"user name is {user_name} and user email is {user_email}")
-    return {"user_name": user_name,
-            "user_email": user_email}
+    return {"user_name": user_name, "user_email": user_email}
 
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
@@ -249,6 +246,14 @@ def bill_pdf():
 
 @app.route("/bests", methods=["POST"])
 def bests():
+    result ,statut = manage_bill_upload()
+    if statut==200:
+        result = json.loads(result)
+        result ,statut = get_upload_bests(result["upload_id"])
+    return result, statut
+
+@app.route("/bests2", methods=["POST"])
+def bests2():
     ip = request.remote_addr
     file_obj = request.files.get("pdf")
     pdf_data = file_obj.read()
@@ -283,7 +288,7 @@ def bests():
             if priced["retailer"] in ["winenergy","ocenergy","embeddedorigin"]:
                 return bad_results("embedded")
 
-        history = get_history('beatyourbill-bucket', parsed["users_nmi"])
+        history = get_history('beatyourbill-bucket', parsed["users_nmi"], parsed["to_date"])
         if history:
             runn = RunAvg(history).running_parameters()
             curr = RunAvg([parsed]).running_parameters()
@@ -640,20 +645,3 @@ def nmis():
         print(e.response['Error']['Message'])
         raise e
 
-# We only need this for local development.
-if __name__ == '__main__':
-
-    customer_id = "1d758e80-5d71-45e2-bd9e-4a03b2c33687"
-    response = best_offers_table.query(
-        KeyConditionExpression=Key('customer_id').eq(customer_id),
-        ProjectionExpression="priced.users_nmi, priced.address"
-    )
-    items = response['Items']
-    keys = set()
-    result = []
-    for x in items:
-        if not x["priced"]["users_nmi"] in keys:
-            result.append(x["priced"])
-        keys.add(x["priced"]["users_nmi"])
-
-    print(results)
