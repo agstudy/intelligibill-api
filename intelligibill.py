@@ -18,7 +18,7 @@ import requests
 import stripe
 from urllib import parse
 from smart_meter import get_history, RunAvg
-from shared import annomyze_offers, bill_id, populate_bests_offers, populate_bill_users
+from shared import annomyze_offers, bill_id, populate_bests_offers, populate_bill_users, get_stripe_key
 
 from send_bill import send_ses_bill, send_feedback
 
@@ -26,7 +26,7 @@ from flask_cors import CORS
 from datetime import datetime
 from decimal import Decimal
 
-stripe.api_key = os.environ.get("stripe.api_key")
+stripe.api_key = get_stripe_key(os.environ.get("stripe.api_key"))
 COUPON_TOKEN = os.environ.get("coupon")
 SOURCE_BILL = os.environ.get("source-bill")
 

@@ -313,18 +313,12 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
             "message": message
         }), 200
 
+
+def get_stripe_key(key):
+    ssm = boto3.client('ssm', region_name='us-east-1')
+    print("key parameter is ", key)
+    parameter = ssm.get_parameter(Name=key)
+    return parameter["Parameter"]["Value"]
+
 if __name__=='__main__':
-    customer_id = "1d758e80-5d71-45e2-bd9e-4a03b2c33687"
-    response = best_offers_table.query(
-        KeyConditionExpression=Key('customer_id').eq(customer_id),
-        ProjectionExpression="priced.users_nmi, priced.address"
-    )
-    items = response['Items']
-    keys = set()
-    result = []
-    for x in items:
-        if not x["priced"]["users_nmi"] in keys:
-            result.append(x["priced"])
-        keys.add(x["priced"]["users_nmi"])
-    from pprint import pprint
-    pprint(result)
+    res = byb_temporary_user("stephanierae.patterson@gmail.com")

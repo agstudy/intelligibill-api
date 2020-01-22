@@ -22,7 +22,7 @@ dev:
     bests_offers_table: bests_offers
     upload_table: upload_free
     bills-bucket: myswitch-bills-bucket
-    stripe.api_key: sk_test_EDPh8yO3Gq39BXTRBlKWZdjj00seur9SJj
+    stripe.api_key: stripe_dev_key
     coupon: "BYB_TRIAL"
     source-bill: IB
     switch-bucket: switch-markintell
@@ -117,7 +117,7 @@ api:
     bests_offers_table: bests_offers_prod
     upload_table: upload_prod_free
     bills-bucket: beatyourbill-bucket
-    stripe.api_key: sk_live_WmTIpxRkckTGpFwhmhz7uZgb00mbMl7tW3
+    stripe.api_key: stripe_key
     coupon: "SOLAR_ANALYTICS_STUFF"
     source-bill: BYB
     switch-bucket: byb-markintell

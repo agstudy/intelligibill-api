@@ -155,7 +155,6 @@ def _update_upload(upload_id, customer_id, bill_id_to_date, message):
         }, ReturnValues="UPDATED_NEW"
     )
 
-
 def manage_bill_upload(file_obj):
     upload_id = f"bill-{uuid.uuid1()}"
     file_name = file_obj.filename
