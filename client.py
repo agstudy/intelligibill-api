@@ -41,13 +41,11 @@ def upload_bill(file_name):
 
 
 if __name__=='__main__':
-    # retrieve_bests_by_id("bill-47e3f6e2-3c5f-11ea-8ddc-e6d93601058f")
-    # file_name = "/tmp/eric_lader/20015759338_2019-12-19.pdf"
-    # result = upload_bill(file_name)
-    # search_bests_by_id(result["upload_id"])
-    # retrieve_bests_by_id(result["upload_id"])
 
-    import boto3
-    ssm = boto3.client('ssm', region_name='us-east-1')
-    parameter = ssm.get_parameter(Name='stripe_key')
-    print(parameter["Parameter"]["Value"])
+    file_name = "/home/agstudy/Downloads/202005.pdf"
+    result = upload_bill(file_name)
+    print(result)
+    ## search_bests_by_id(result["upload_id"])
+    ## retrieve_bests_by_id(result["upload_id"])
+
+

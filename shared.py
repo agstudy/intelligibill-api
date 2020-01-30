@@ -273,7 +273,7 @@ def byb_temporary_user(user_email):
         return sub, force_change
 
 
-def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
+def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=None, error = None ):
     def user_message(argument):
         switcher = {
             "embedded": """
@@ -294,12 +294,13 @@ def bad_results(message, priced={}, file=None, file_name=None, upload_id=None):
                             if you have signed up with us
                           """
         }
-        return switcher.get(argument, message)
+        return switcher.get(argument, message_code)
 
-    message = user_message(message)
+    message = user_message(message_code)
+    message_email = message
     if upload_id:
-        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{message}/{upload_id}.pdf")
-        send_ses_bill(bill_file=None, user_="anonymous", user_message=message, upload_id=upload_id)
+        copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BAD_BILLS_BUCKET, f"{message_code}/{upload_id}.pdf")
+        send_ses_bill(bill_file=None, user_="anonymous", user_message=message_email, upload_id=upload_id, error= error )
     elif file:
         s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
         send_ses_bill(bill_file=file, user_="anonymous", user_message=message)

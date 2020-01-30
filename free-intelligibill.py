@@ -35,11 +35,9 @@ def retrieve_upload_bests():
 def bests():
     file_obj = request.files.get("pdf")
     result ,statut = manage_bill_upload(file_obj)
-    print("result is :" , result)
-    print(statut)
     if statut==200:
         result = json.loads(result)
-        result ,statut = get_upload_bests(result["upload_id"])
+        result ,statut = get_upload_bests(result["upload_id"], result["parsed"])
     return result, statut
 
 

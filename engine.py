@@ -8,6 +8,8 @@ from smart_meter import get_history, RunAvg
 from shared import  bill_id, populate_bill_users, populate_bests_offers, copy_object, \
     _create_best_result, bad_results,  bill_file_name, user_id
 
+from  byb_validation.validate import validate
+
 from cts import SOURCE_BILL, BILLS_BUCKET, best_offers_table, upload_table
 import boto3, uuid, hashlib, json, requests
 s3_resource = boto3.resource('s3')
@@ -20,14 +22,17 @@ def scanned_priced(pdf_file):
     ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
     try:
         url_miswitch = "https://switch.markintell.com.au/api/pdf/scanned-bill"
-        r = requests.post(url_miswitch, files={"pdf": pdf_file})
-        if r.status_code == 200:
-            parsed = json.loads(r.content)
-            return True, parsed
+        with open(pdf_file, "rb") as f:
+            r = requests.post(url_miswitch, files={"pdf": f})
+            if r.status_code == 200:
+                parsed = json.loads(r.content)
+                return True, parsed
+            return False, None
     except Exception as ex:
         print(ex)
         bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
         return False, f"This is a scanned bill.\n{bad_message}"
+
 
 def _parse_upload(local_file, file_name, upload_id):
     Extractor.process_pdf(local_file)
@@ -161,6 +166,7 @@ def manage_bill_upload(file_obj):
     pdf_data = file_obj.read()
     checksum = hashlib.md5(pdf_data).hexdigest()
     local_file = f"/tmp/{upload_id}.pdf"
+    parsed = None
     with open(local_file, "wb") as out:
         out.write(pdf_data)
     key_file = f"upload/{upload_id}.pdf"
@@ -171,24 +177,30 @@ def manage_bill_upload(file_obj):
     _store_upload(upload_id, file_name, checksum, message, provider=provider)
     if not is_bill:
         if "scanned" in message:
-            res, parsed = scanned_priced(pdf_data)
+            with open(local_file, "wb") as out:
+                out.write(pdf_data)
+                res, parsed = scanned_priced(local_file)
             if not res:
                 return bad_results(parsed, file=local_file, file_name=file_name, upload_id=upload_id)
         else:
             return bad_results(message, file=local_file, file_name=file_name, upload_id=upload_id)
-    result = {"upload_id": upload_id, "message": "success"}
+    result = {"upload_id": upload_id, "message": "success", "parsed":parsed}
     result = json.dumps(result)
     return result, 200
 
-def get_upload_bests(upload_id):
+def get_upload_bests(upload_id, parsed= None ):
     local_file = f"/tmp/{upload_id}.pdf"
     key_file = f"upload/{upload_id}.pdf"
     s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=local_file, Key=key_file)
     is_business = request.form.get("is_business")
     is_business = True if is_business == "yes" else False
     file_name = f"/{upload_id}.pdf"
-    status, parsed = _parse_upload(local_file, file_name, upload_id)
-    if not status: return parsed
+    if not parsed:
+        status, parsed = _parse_upload(local_file, file_name, upload_id)
+        if not status: return parsed
+    is_valid, error = validate(parsed)
+    if not is_valid:
+        return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error)
     priced = _running_avg(parsed)
     result = _get_bests(upload_id, priced, file_name, is_business)
     _process_upload_miswitch(request, local_file, file_name)
@@ -219,3 +231,5 @@ def retrive_bests_by_id(upload_id):
     except Exception as e:
         print(e)
         raise e
+
+

@@ -3,7 +3,6 @@ from flask import jsonify, request
 import boto3
 from tempfile import NamedTemporaryFile
 from extractor import Extractor
-from pdf_parse.parser import BillParser
 from bill_pricing import Bill
 from best_offer import get_bests
 import decimal
@@ -17,8 +16,7 @@ import os
 import requests
 import stripe
 from urllib import parse
-from smart_meter import get_history, RunAvg
-from shared import annomyze_offers, bill_id, populate_bests_offers, populate_bill_users, get_stripe_key
+from shared import annomyze_offers, bill_id, get_stripe_key
 
 from send_bill import send_ses_bill, send_feedback
 
@@ -252,94 +250,9 @@ def bests():
     print(statut)
     if statut==200:
         result = json.loads(result)
-        result ,statut = get_upload_bests(result["upload_id"])
+        result ,statut = get_upload_bests(result["upload_id"], result["parsed"])
     return result, statut
 
-
-@app.route("/bests2", methods=["POST"])
-def bests2():
-    ip = request.remote_addr
-    file_obj = request.files.get("pdf")
-    pdf_data = file_obj.read()
-    is_business = request.form.get("is_business")
-    is_business = True if is_business == "yes" else False
-    file_name = file_obj.filename
-    print("trying to parse ...", file_name)
-    id = f"/tmp/{uuid.uuid1()}.pdf"
-    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
-        out.write(pdf_data)
-        copyfile(out.name, id)
-        is_bill, message = Extractor.check_bill(out.name)
-        if not is_bill:
-            return bad_results(message, file=id, file_name=file_name)
-        Extractor.process_pdf(out.name)
-        bp = BillParser(
-            xml_=Extractor.xml_,
-            xml_data_=Extractor.xml_data,
-            txt_=Extractor.txt_,
-            file_name=file_name)
-        try:
-            bp.parse_bill()
-        except Exception as ex:
-            print(ex)
-            return bad_results("no_parsing", file=id, file_name=file_name)
-
-        if not bp.parser or not bp.parser.json:
-            return bad_results("no_parsing", file=id, file_name=file_name)
-        parsed = bp.parser.json
-        priced: dict = Bill(dict(parsed))()
-        if priced:
-            if priced["retailer"] in ["winenergy","ocenergy","embeddedorigin"]:
-                return bad_results("embedded")
-
-        history = get_history('beatyourbill-bucket', parsed["users_nmi"], parsed["to_date"])
-        if history:
-            runn = RunAvg(history).running_parameters()
-            curr = RunAvg([parsed]).running_parameters()
-            ann_factor = round(runn["run_avg_daily_use"] / curr["run_avg_daily_use"], 5)
-            for k, v in parsed.items():
-                if "_usage" in k:
-                    parsed[k] = round(v * ann_factor)
-            priced = Bill(dict(parsed))()
-            if priced["has_solar"] and history:
-                priced["ann_solar_export"] = runn["run_solar_export"]
-
-        res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-        key_file = bill_file_name(priced)
-        customer = user_id()
-        user_ = coginto_user()
-        try:
-            populate_bill_users(priced, "connected", customer, ip, user_["user_email"], user_["user_name"])
-        except Exception as ex:
-            print("CANNOT STORE USER PARAMETERS FROM BILL")
-            print(ex)
-
-        populate_bests_offers(res, priced, nb_offers, ranking, key_file=key_file, customer_id= user_id(),nb_retailers=nb_retailers)
-        s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=id, Key=key_file)
-        s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
-        os.remove(id)
-        if not len(res):
-
-            result = {
-                "evaluated": nb_offers,
-                "ranking": ranking,
-                "nb_retailers": nb_retailers,
-                "bests": res,
-                "bill": priced,
-                "message": "no saving"}
-            result = json.dumps(result, indent=4)
-            return result, 200
-        nmi = priced["users_nmi"]
-        if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
-        result = {
-            "evaluated": nb_offers,
-            "ranking": ranking,
-            "nb_retailers": nb_retailers,
-            "bests": res,
-            "bill": priced,
-            "message": "saving"}
-        result = json.dumps(result, indent=4)
-        return result, 200
 
 @app.route("/bests/single", methods=["POST"])
 def bests_single():

@@ -57,7 +57,7 @@ def send_feedback(bill_file,message,user_):
 
 
 @task
-def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None):
+def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None, error = None ):
     SENDER = "BeatYourBill <contact@beatyourbill.com.au>"
     AWS_REGION = "us-east-1"
     if user_=="anonymous":
@@ -69,7 +69,10 @@ def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None):
         RECIPIENT = feedback_list.split(',')
     SUBJECT = "BeatYourBill:  bill parsing problem"
 
-    message = "Hi Bruce,\r\nPlease see what happened with the attached bill"
+    message = "Hi ,\r\nPlease see what happened with the attached bill"
+    error_message = ""
+    if error:
+        error_message = f"There is a validation error. Parsed value of {error} is out of limits"
 
     BODY_HTML = f"""\
     <html>
@@ -80,10 +83,10 @@ def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None):
     <p>user: {user_["user_name"]}</p>
     <p>email: {user_["user_email"]}</p>
     <p>Message sent to user: {user_message}</p>
+    <p>{error_message}</p>
     </body>
     </html>
     """
-
     if to :
         BODY_HTML = f"""\
         <html>
