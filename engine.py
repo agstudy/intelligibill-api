@@ -9,29 +9,16 @@ from shared import  bill_id, populate_bill_users, populate_bests_offers, copy_ob
     _create_best_result, bad_results,  bill_file_name, user_id
 
 from  byb_validation.validate import validate
+from  miswitch_services import _process_upload_miswitch, ocr_scanned
 
-from cts import SOURCE_BILL, BILLS_BUCKET, best_offers_table, upload_table
-import boto3, uuid, hashlib, json, requests
+from cts import  BILLS_BUCKET, best_offers_table, upload_table
+import boto3, uuid, hashlib, json
+
 s3_resource = boto3.resource('s3')
 
 def is_connected():
    return request.headers.get('user_id') is not None
 
-
-def scanned_priced(pdf_file):
-    ## s3_resource.Bucket(SWITCH_MARKINTELL_BUCKET).upload_file(Filename=id, Key=key_file)
-    try:
-        url_miswitch = "https://switch.markintell.com.au/api/pdf/scanned-bill"
-        with open(pdf_file, "rb") as f:
-            r = requests.post(url_miswitch, files={"pdf": f})
-            if r.status_code == 200:
-                parsed = json.loads(r.content)
-                return True, parsed
-            return False, None
-    except Exception as ex:
-        print(ex)
-        bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
-        return False, f"This is a scanned bill.\n{bad_message}"
 
 
 def _parse_upload(local_file, file_name, upload_id):
@@ -99,27 +86,7 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     )
     copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BILLS_BUCKET, key_file)
 
-def _process_upload_miswitch(request, local_file, file_name):
-    email = request.form.get("email")
-    if email:
-        user_email = email
-        user_name = email
-    else:
-        user_email = "anonymous_email"
-        user_name = "anonymous_name"
 
-    try:
-        with open(local_file, "rb") as f:
-            url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-            r = requests.post(url_miswitch, files={'pdf': f},
-                              data={"source": SOURCE_BILL,
-                                    "file_name": file_name,
-                                    "user_name": user_name,
-                                    "user_email": user_email
-                                    })
-            print("reponse miswitch", r)
-    except Exception as ex:
-        print(ex)
 
 def _get_bests(upload_id, priced, file_name, is_business):
     try:
@@ -171,6 +138,7 @@ def manage_bill_upload(file_obj):
         out.write(pdf_data)
     key_file = f"upload/{upload_id}.pdf"
     s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=local_file, Key=key_file)
+    print("key file is ", key_file)
     is_bill, message = Extractor.check_bill(local_file)
     if is_bill: message = "success"
     provider = request.remote_addr
@@ -179,7 +147,7 @@ def manage_bill_upload(file_obj):
         if "scanned" in message:
             with open(local_file, "wb") as out:
                 out.write(pdf_data)
-                res, parsed = scanned_priced(local_file)
+                res, parsed = ocr_scanned(local_file)
             if not res:
                 return bad_results(parsed, file=local_file, file_name=file_name, upload_id=upload_id)
         else:
@@ -203,7 +171,8 @@ def get_upload_bests(upload_id, parsed= None ):
         return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error)
     priced = _running_avg(parsed)
     result = _get_bests(upload_id, priced, file_name, is_business)
-    _process_upload_miswitch(request, local_file, file_name)
+    email = request.form.get("email")
+    _process_upload_miswitch(upload_id, email)
     return result, 200
 
 def retrive_bests_by_id(upload_id):
@@ -231,5 +200,16 @@ def retrive_bests_by_id(upload_id):
     except Exception as e:
         print(e)
         raise e
+
+
+def best_single(priced,retailer, upload_id=None):
+
+    try:
+        print("trying to get all other retailer best offers ...")
+        res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
+        return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking), 200
+    except Exception as ex:
+        print(ex)
+        return bad_results(message_code= "no_single_pricing", priced=priced)
 
 

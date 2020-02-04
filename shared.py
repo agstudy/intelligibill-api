@@ -2,13 +2,12 @@ from datetime import datetime
 import boto3
 import decimal
 import json
-from boto3.dynamodb.conditions import Key
 from flask import jsonify
-from cts import users_paid_table, COGNITO_POOL_ID
-import stripe
+from cts import COGNITO_POOL_ID
 from cts import BILLS_BUCKET, BAD_BILLS_BUCKET, best_offers_table, users_bill_table
 from send_bill import send_ses_bill
 from flask import request
+from byb_payment.payment import paid_customer_info
 
 
 s3_resource = boto3.resource('s3')
@@ -24,23 +23,6 @@ class DecimalEncoder(json.JSONEncoder):
                 return int(o)
         return super(DecimalEncoder, self).default(o)
 
-
-class BestDTO:
-
-    green = []
-    region: str
-    offer_date: str
-    url: str
-    distributor: str
-    saving: float
-    offer_total_bill: float
-    offer_id: str
-    retailer: str
-    tariff_type: str
-    exit_fee: str
-    origin_offer: {}
-    frequency: float
-    frequency_green: float
 
 def is_disconnected():
    return request.headers.get('user_id') is None
@@ -63,39 +45,15 @@ def coginto_user():
     return {"user_name": user_name,
             "user_email": user_email}
 
-def paid_customer(nmi):
+
+
+def is_paid_customer(nmi):
     user_name = coginto_user()
     if not user_name:
         return {"is_paid": False}
     else:
         user_name = user_name["user_name"]
-    response = users_paid_table.get_item(Key={'nmi': nmi})
-    if not 'Item' in response:
-        return {"is_paid": False}
-    item = response["Item"]
-    if item["user_name"] != user_name:
-        return {"is_paid": False}
-
-    if "charge_id" in item:
-        charge_id = response["Item"]["charge_id"]
-        charge = stripe.Charge.retrieve(charge_id)
-        return {
-            "is_paid": charge["paid"],
-            "receipt": charge["receipt_url"],
-            "amount": charge["amount"] / 100,
-            "payment_date": item["creation_date"]
-        }
-    elif "coupon" in item:
-        payment = item["payment"]
-        return {
-            "is_paid": payment["paid"],
-            "receipt": payment["receipt_url"],
-            "amount": float(payment["amount"]),
-            "payment_date": item["creation_date"]
-        }
-
-def is_paid_customer(nmi):
-    return paid_customer(nmi)["is_paid"]
+    return paid_customer_info(nmi, user_name)["is_paid"]
 
 def annomyze_offers(offers):
     for i, x in enumerate(offers):
@@ -129,7 +87,6 @@ def bill_id(priced):
 
 def bill_file_name(priced, user):
     return f"private/{user}/{bill_id(priced)}.pdf"
-
 
 def user_id(priced, email=None):
     if email :
@@ -231,8 +188,6 @@ def _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking
     result = json.dumps(result, indent=4, cls=DecimalEncoder)
     return result
 
-
-
 def _user_exists(user_email):
     cognito = boto3.client('cognito-idp')
     response = cognito.list_users(
@@ -266,12 +221,15 @@ def byb_temporary_user(user_email):
                 'Name': 'email',
                 'Value': user_email
             },
+            {
+                'Name': 'email_verified',
+                'Value': True
+            }
         ]
     )
     exists, sub, force_change = _user_exists(user_email)
     if exists:
         return sub, force_change
-
 
 def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=None, error = None ):
     def user_message(argument):
@@ -292,7 +250,8 @@ def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=No
                             Could you please check that it is an original PDF bill. 
                             If the problem is on our side, we will fix it and let you know 
                             if you have signed up with us
-                          """
+                          """,
+            "no_single_pricing":"pricing problem"
         }
         return switcher.get(argument, message_code)
 
@@ -314,10 +273,8 @@ def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=No
             "message": message
         }), 200
 
-
 def get_stripe_key(key):
     ssm = boto3.client('ssm', region_name='us-east-1')
-    print("key parameter is ", key)
     parameter = ssm.get_parameter(Name=key)
     return parameter["Parameter"]["Value"]
 

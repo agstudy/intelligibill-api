@@ -27,12 +27,6 @@ dev:
     source-bill: IB
     switch-bucket: switch-markintell
     feedback_list : contact@ag-study.com
-  events:
-  - function: intelligibill.process_upload_miswitch
-    event_source:
-      arn: arn:aws:s3:::switch-markintell
-      events:
-      - s3:ObjectCreated:*
 
 free:
   app_function: free-intelligibill.app
@@ -54,12 +48,6 @@ free:
     switch-bucket: switch-markintell
     feedback_list: contact@ag-study.com
     source-bill: IB
-  events:
-  - function: intelligibill.process_upload_miswitch
-    event_source:
-      arn: arn:aws:s3:::switch-markintell
-      events:
-      - s3:ObjectCreated:*
 
 prodfree:
   app_function: free-intelligibill.app
@@ -82,11 +70,6 @@ prodfree:
     source-bill: BYB
     feedback_list: contact@ag-study.com
   events:
-  - function: intelligibill.process_upload_miswitch
-    event_source:
-      arn: arn:aws:s3:::byb-markintell
-      events:
-      - s3:ObjectCreated:*
   - function: email_byb.process_new_email
     event_source:
       arn: arn:aws:s3:::byb-emails
@@ -122,9 +105,3 @@ api:
     source-bill: BYB
     switch-bucket: byb-markintell
     feedback_list : contact@ag-study.com, bruce.mountain@cmeaustralia.com.au
-  events:
-  - function: intelligibill.process_upload_miswitch
-    event_source:
-      arn: arn:aws:s3:::byb-markintell
-      events:
-      - s3:ObjectCreated:*

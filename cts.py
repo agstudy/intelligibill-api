@@ -14,4 +14,8 @@ SOURCE_BILL = os.environ.get("source-bill")
 ## cts
 COGNITO_POOL_ID = "ap-southeast-2_IG69RgQQJ"
 
+# payment
+AMOUNT = 3000
+COUPON_TOKEN = os.environ.get("coupon")
+
 

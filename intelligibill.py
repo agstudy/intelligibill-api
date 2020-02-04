@@ -7,22 +7,19 @@ from bill_pricing import Bill
 from best_offer import get_bests
 import decimal
 import json
-from boto3.dynamodb.conditions import Key
+from byb_payment.account import current_nmi, nmis
+from byb_payment.payment import charge_client, coupon_client, invoice_client, is_paid, paid_customer_info
 from botocore.exceptions import ClientError
 from shutil import copyfile
 import uuid
 import io
 import os
-import requests
 import stripe
-from urllib import parse
-from shared import annomyze_offers, bill_id, get_stripe_key
-
-from send_bill import send_ses_bill, send_feedback
-
+from shared import annomyze_offers, bill_id, get_stripe_key, coginto_user
+from send_bill import send_feedback
 from flask_cors import CORS
 from datetime import datetime
-from decimal import Decimal
+from engine import manage_bill_upload, get_upload_bests, best_single
 
 stripe.api_key = get_stripe_key(os.environ.get("stripe.api_key"))
 COUPON_TOKEN = os.environ.get("coupon")
@@ -40,84 +37,15 @@ users_bill_table = dynamodb.Table(os.environ.get('users_bill_table'))
 BILLS_BUCKET = os.environ.get('bills-bucket')
 SWITCH_MARKINTELL_BUCKET = os.environ.get("switch-bucket")
 BAD_BILLS_BUCKET = "ib-bad-bills"
-AMOUNT = 3000
 COGNITO_POOL_ID = "ap-southeast-2_IG69RgQQJ"
-from engine import manage_bill_upload, get_upload_bests
+
 
 def user_id():
     return request.headers.get('user_id')
 
-def coginto_user(sub=None):
-    if not sub: sub = user_id()
-    response = cognito.list_users(
-        UserPoolId=COGNITO_POOL_ID,
-        AttributesToGet=[
-            'email',
-        ],
-        Filter=f'sub="{sub}"'
-    )
-    user_ = response["Users"][0]
-    user_name = user_["Username"]
-    user_email = ""
-    for x in user_["Attributes"]:
-        if x["Name"] == "email":
-            user_email = x["Value"]
-    return {"user_name": user_name, "user_email": user_email}
 
 def bill_file_name(priced):
     return f"private/{user_id()}/{bill_id(priced)}.pdf"
-
-def populate_paid_users(nmi, payment, customer_id=None, charge_id=None, coupon=None):
-    user_ = coginto_user()
-    creation_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-
-    item = {
-        'nmi': nmi,
-        'user_name': user_['user_name'],
-        'user_email': user_['user_email'],
-        'creation_date': creation_date,
-        'payment': payment,
-    }
-    if customer_id:
-        item.update(
-            {
-                'customer_id': customer_id,
-                'charge_id': charge_id
-            }
-        )
-    if coupon:
-        item.update(
-            {
-                'coupon': coupon,
-            })
-    users_paid_table.put_item(Item=item)
-
-def paid_customer(nmi):
-    response = users_paid_table.get_item(Key={'nmi': nmi})
-    if 'Item' in response:
-        item = response["Item"]
-        user_name = coginto_user()["user_name"]
-        if item["user_name"] != user_name:
-           return {"is_paid": False}
-
-        if "charge_id" in item:
-            charge_id = response["Item"]["charge_id"]
-            charge = stripe.Charge.retrieve(charge_id)
-            return {
-                "is_paid": charge["paid"],
-                "receipt": charge["receipt_url"],
-                "amount": charge["amount"] / 100,
-                "payment_date": item["creation_date"]
-            }
-        elif "coupon" in item:
-            payment = item["payment"]
-            return {
-                "is_paid": payment["paid"],
-                "receipt": payment["receipt_url"],
-                "amount": float(payment["amount"]),
-                "payment_date": item["creation_date"]
-            }
-    return {"is_paid": False}
 
 def update_bests_offers(bests, priced, nb_offers, ranking):
     spot_date = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
@@ -149,38 +77,6 @@ def update_bests_offers(bests, priced, nb_offers, ranking):
                                    ':spot_date': spot_date},
         ReturnValues="UPDATED_NEW")
 
-def bad_results(message, priced={}, file=None, file_name=None):
-
-
-    def user_message(argument):
-        switcher = {
-            "embedded":"""
-                    Your are supplied on an embedded network. 
-                    Unfortunately you can not choose your supplier. 
-                    We are sorry we can not be useful to you.
-                  """,
-            "no_parsing":"""
-                    We are sorry we could not read your bill. 
-                    Could you please check that it is an original PDF bill. 
-                    If the problem is on our side, we will fix it and let you know 
-                    if you have signed up with us
-                  """
-        }
-        return switcher.get(argument, message)
-
-
-    message = user_message(message)
-    if file:
-        s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
-        user_ = coginto_user()
-        send_ses_bill(file, user_,message)
-
-    return jsonify(
-        {'bests': [],
-         'evaluated': -1,
-         'bill': priced,
-         "message": message
-         }), 200
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, o):
@@ -190,29 +86,6 @@ class DecimalEncoder(json.JSONEncoder):
             else:
                 return int(o)
         return super(DecimalEncoder, self).default(o)
-
-def process_upload_miswitch(event, context):
-    """
-    Process a file upload.
-    """
-    x = event['Records'][0]
-    bucket = x['s3']['bucket']['name']
-    key = x['s3']['object']['key']
-    key = parse.unquote_plus(key)
-    id = uuid.uuid1()
-    local_file = f"/tmp/{id}.pdf"
-    s3_resource.Bucket(bucket).download_file(Filename=local_file, Key=key)
-    sub = key.split('/')[1]
-    user_ib = coginto_user(sub)
-    file_bytes = open(local_file, 'rb').read()
-    url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
-    r = requests.post(url_miswitch, files={'pdf': file_bytes},
-                      data={"source": SOURCE_BILL,
-                            "file_name": "_".join(key.split("/")[1:]),
-                            "user_email": user_ib["user_email"],
-                            "user_name": user_ib["user_name"]
-                            })
-    print("reponse miswitch", r)
 
 @app.route('/bill/page', methods=['GET'])
 def bill_source():
@@ -255,45 +128,35 @@ def bests():
 
 
 @app.route("/bests/single", methods=["POST"])
-def bests_single():
+def bests_single_service():
     params = request.get_json()
     priced = params.get("priced")
     retailer = params.get("retailer")
-    print("trying to get all other retailer best offers ...")
-    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, unique=False, single_retailer=retailer)
-    if not len(res):
-        return bad_results("no saving", priced)
-    nmi = priced["users_nmi"]
-    if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
-    result = {"evaluated": nb_offers,
-              "ranking": ranking,
-              "nb_retailers": 1,
-              "bests": res,
-              "bill": priced,
-              "message": "saving"}
-    result = json.dumps(result, indent=4)
-    return result, 200
+    result, statut = best_single (priced, retailer)
+    return result, statut
 
-@app.route("/bests/reprice", methods=["POST"])
-def reprice():
-    params = request.get_json()
-    print("trying to reprice ...")
-    parsed = params["parsed"]
-    priced: dict = Bill(dict(parsed))()
-    is_business = params["is_business"]
-    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
-    update_bests_offers(res, priced, nb_offers, ranking)
-    if not len(res):
-        return bad_results("no saving", priced)
-    nmi = parsed["users_nmi"]
-    if not paid_customer(nmi)["is_paid"]: annomyze_offers(res)
-    return jsonify(
-        {"evaluated": nb_offers,
-         "ranking": ranking,
-         "nb_retailers": nb_retailers,
-         "bests": res,
-         "bill": priced,
-         "message": "saving"}), 200
+# @app.route("/bests/reprice", methods=["POST"])
+# def reprice():
+#     params = request.get_json()
+#     print("trying to reprice ...")
+#     parsed = params["parsed"]
+#     priced: dict = Bill(dict(parsed))()
+#     is_business = params["is_business"]
+#     res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+#     update_bests_offers(res, priced, nb_offers, ranking)
+#     if not len(res):
+#         return bad_results("no saving", priced)
+#     nmi = parsed["users_nmi"]
+#     user_ = coginto_user()
+#     if not paid_customer_info(nmi, user_["user_name"])["is_paid"]: annomyze_offers(res)
+#
+#     return jsonify(
+#         {"evaluated": nb_offers,
+#          "ranking": ranking,
+#          "nb_retailers": nb_retailers,
+#          "bests": res,
+#          "bill": priced,
+#          "message": "saving"}), 200
 
 @app.route("/tracker", methods=["GET"])
 def tracker():
@@ -340,7 +203,8 @@ def tracker_detail():
         items = response['Items']
         if items:
             x = items[0]
-            if not paid_customer(nmi)["is_paid"]: annomyze_offers( x["bests"])
+            user_ = coginto_user()
+            if not paid_customer_info(nmi, user_["user_name"])["is_paid"]: annomyze_offers(x["bests"])
             result = {"bests": x["bests"] , "bill": x["priced"]}
             result = json.dumps(result, indent=4, cls=DecimalEncoder)
             return result, 200
@@ -384,104 +248,6 @@ def admin_bills():
         print(e.response['Error']['Message'])
         raise e
 
-@app.route("/payment/charge", methods=["POST"])
-def charge_client():
-    params = request.get_json()
-    token = params.get("stripeToken")
-
-    nmi = params.get("nmi")
-    user_ = coginto_user()
-    customer = stripe.Customer.create(
-        email=user_["user_email"],
-        source=token,
-        name= user_["user_name"],
-        description=nmi
-    )
-    stripe_cus = customer.id
-    charge = stripe.Charge.create(
-        customer=stripe_cus,
-        amount=AMOUNT,
-        currency='aud',
-        description=f'BeatYourBill annual fee for NMI: {nmi} [including ($2.73) gst]',
-        receipt_email=user_["user_email"],
-        metadata={"nmi": nmi}
-    )
-    print(f"/payment/charge charge is {charge}")
-    payment = json.loads(json.dumps(charge), parse_float=decimal.Decimal)
-    populate_paid_users(nmi, payment, stripe_cus, charge.id)
-    return jsonify(charge), 200
-
-@app.route("/payment/invoice", methods=["POST"])
-def invoice_client():
-    params = request.get_json()
-    token = params.get("stripeToken")
-
-    nmi = params.get("nmi")
-    user_ = coginto_user()
-    customer = stripe.Customer.create(
-        email=user_["user_email"],
-        source=token
-    )
-    stripe_cus = customer.id
-    tax_rate = stripe.TaxRate.create(
-        display_name='GST',
-        jurisdiction='AUS',
-        percentage=10.0
-    )
-
-    stripe.InvoiceItem.create(
-        customer=stripe_cus,
-        amount=AMOUNT,
-        currency='aud',
-        tax_rates=tax_rate,
-        description=f'BeatYourBill annual fee for NMI: {nmi}'
-    )
-    invoice = stripe.Invoice.create(
-        customer=stripe_cus,
-        auto_advance=True
-    )
-
-    payment = json.loads(json.dumps(invoice), parse_float=decimal.Decimal)
-    populate_paid_users(nmi, payment, stripe_cus, invoice.id)
-    return jsonify(invoice), 200
-
-@app.route("/payment/coupon", methods=["POST"])
-def coupon_client():
-    params = request.get_json()
-    coupon = params.get("coupon")
-    nmi = params.get("nmi")
-
-    res = {
-        "paid": None,
-        "receipt_url": None,
-        "status": None
-    }
-    if coupon and coupon == COUPON_TOKEN:
-        res = {
-            "paid": True,
-            "receipt_url": "coupon",
-            "status": "OK"
-        }
-        payment = dict(res)
-        payment.update(
-            {
-                "coupon": coupon,
-                "amount": Decimal(AMOUNT / 100)
-            }
-        )
-        populate_paid_users(nmi, payment=payment, coupon=coupon)
-    return jsonify(res), 200
-
-@app.route('/payment/is_paid', methods=['GET'])
-def is_paid():
-    nmi = request.args.get('nmi')
-    if not nmi:
-        nmi = get_current_nmi()
-    payment = paid_customer(nmi)
-
-    payment.update({"threshold": 100})
-    return jsonify(payment), 200
-
 @app.route("/feedback", methods=["POST"])
 def feedback():
     comment = request.form.get("comment")
@@ -503,62 +269,51 @@ def feedback():
         result = json.dumps(result, indent=4)
         return result, 200
 
-def get_current_nmi():
-    customer_id = user_id()
-    response = best_offers_table.query(
-        KeyConditionExpression=Key('customer_id').eq(customer_id),
-        ProjectionExpression="priced.users_nmi, priced.address, spot_date"
-    )
-    items = response['Items']
-    spot_date_MAX = datetime.strptime("2000-01-01-00-00-00", '%Y-%m-%d-%H-%M-%S')
-    current = None
-    for x in items:
-        spot_date = datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
-        if spot_date > spot_date_MAX:
-            spot_date_MAX = spot_date
-            current = x
-    print(f"current is {current}")
-    return current["priced"]["users_nmi"]
 
 @app.route("/current_nmi", methods=["GET"])
-def current_nmi():
+def current_nmi_service():
     customer_id = user_id()
-    try:
-        response = best_offers_table.query(
-            KeyConditionExpression=Key('customer_id').eq(customer_id),
-            ProjectionExpression="priced.users_nmi, priced.address, spot_date"
-        )
-        items = response['Items']
-        spot_date_MAX = datetime.strptime("2000-01-01-00-00-00", '%Y-%m-%d-%H-%M-%S')
-        current = None
-        for x in items:
-            spot_date = datetime.strptime(x["spot_date"], '%Y-%m-%d-%H-%M-%S')
-            if spot_date > spot_date_MAX:
-                spot_date_MAX = spot_date
-                current = x
-        return jsonify(current), 200
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        raise e
+    current = current_nmi(customer_id)
+    return jsonify(current), 200
 
 @app.route("/nmis", methods=["GET"])
-def nmis():
+def nmis_service():
     customer_id = user_id()
-    try:
-        response = best_offers_table.query(
-            KeyConditionExpression=Key('customer_id').eq(customer_id),
-            ProjectionExpression="priced.users_nmi, priced.address"
-        )
-        items = response['Items']
-        keys = set()
-        result = []
-        for x in items:
-            if not x["priced"]["users_nmi"] in keys:
-                result.append(x["priced"])
-            keys.add(x["priced"]["users_nmi"])
+    res = nmis(customer_id)
+    return jsonify(res), 200
 
-        return jsonify(result), 200
-    except ClientError as e:
-        print(e.response['Error']['Message'])
-        raise e
+@app.route("/payment/charge", methods=["POST"])
+def charge_client_service():
+    params = request.get_json()
+    token = params.get("stripeToken")
+    nmi = params.get("nmi")
+    user_ = coginto_user()
+    charge = charge_client(stripe_token=token, nmi=nmi, user_name=user_["user_name"], user_email=user_["user_email"])
+    return jsonify(charge), 200
 
+@app.route("/payment/invoice", methods=["POST"])
+def invoice_client_service():
+    params = request.get_json()
+    token = params.get("stripeToken")
+    nmi = params.get("nmi")
+    user_ = coginto_user()
+    invoice = invoice_client(token, nmi, user_["user_email"])
+    return jsonify(invoice), 200
+
+@app.route("/payment/coupon", methods=["POST"])
+def coupon_client_service():
+    params = request.get_json()
+    coupon = params.get("coupon")
+    nmi = params.get("nmi")
+    user_ = coginto_user()
+    res = coupon_client( nmi= nmi, coupon= coupon,  user_name = user_["user_name"], user_email = user_["user_email"])
+    return jsonify(res), 200
+
+@app.route('/payment/is_paid', methods=['GET'])
+def is_paid_service():
+    user_ = coginto_user()
+    user_name = user_["user_name"]
+    nmi = request.args.get('nmi')
+    print("is paid nmi is ", nmi)
+    payment = is_paid(nmi, user_name, user_id())
+    return jsonify(payment), 200
