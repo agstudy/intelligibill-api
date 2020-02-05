@@ -199,7 +199,6 @@ def retrive_bests_by_id(upload_id):
         print(e)
         raise e
 
-
 def best_single(priced,retailer, upload_id=None):
 
     try:
@@ -209,5 +208,13 @@ def best_single(priced,retailer, upload_id=None):
     except Exception as ex:
         print(ex)
         return bad_results(message_code= "no_single_pricing", priced=priced)
+
+
+def reprice_existing(parsed, is_business, upload_id = None):
+    priced: dict = Bill(dict(parsed))()
+    result= _get_bests(upload_id=upload_id, priced=priced,file_name= None, is_business=is_business)
+    return result, 200
+
+
 
 

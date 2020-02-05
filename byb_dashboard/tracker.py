@@ -5,9 +5,6 @@ import json, os
 
 def tracker_view(nmi, customer_id):
 
-    print("customer id is ", customer_id)
-    print("nmi is :", nmi)
-
     try:
         response = best_offers_table.query(
             KeyConditionExpression='customer_id=:id and begins_with(bill_id_to_date , :nmi)',
