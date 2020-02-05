@@ -10,7 +10,7 @@ import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from botocore.exceptions import ClientError
-from send_bill import send_ses_bill
+from byb_email.send_bill import send_ses_bill
 from tempfile import NamedTemporaryFile
 from shared import byb_temporary_user
 import re

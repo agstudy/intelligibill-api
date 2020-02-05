@@ -5,6 +5,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from zappa.asynchronous import task
+from shutil import copyfile
+import json, uuid
+from tempfile import NamedTemporaryFile
+
+
 s3_resource = boto3.resource('s3')
 BILLS_BUCKET = os.environ.get('bills-bucket')
 
@@ -133,6 +138,23 @@ def send_ses_bill(bill_file,user_,user_message, to=None , upload_id=None, error 
         print("Email sent! Message ID:"),
         print(response['MessageId'])
 
+
+def receive_feedback(comment, file_obj,user_):
+    if not file_obj:
+        send_feedback(message=comment, user_=user_, bill_file=None)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
+
+    pdf_data = file_obj.read()
+    id_file = f"/tmp/{uuid.uuid1()}.pdf"
+    with NamedTemporaryFile("wb", suffix=".pdf", delete=False) as out:
+        out.write(pdf_data)
+        copyfile(out.name, id_file)
+        send_feedback(id_file, comment, user_)
+        result = {"feedback": True}
+        result = json.dumps(result, indent=4)
+        return result, 200
 
 if __name__ == '__main__':
     send_feedback(user_= {"user_name":"amine","user_email":"amine@gmail.com"},

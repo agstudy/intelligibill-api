@@ -5,7 +5,7 @@ import json
 from flask import jsonify
 from cts import COGNITO_POOL_ID
 from cts import BILLS_BUCKET, BAD_BILLS_BUCKET, best_offers_table, users_bill_table
-from send_bill import send_ses_bill
+from byb_email.feedback import send_ses_bill
 from flask import request
 from byb_payment.payment import paid_customer_info
 
@@ -22,7 +22,6 @@ class DecimalEncoder(json.JSONEncoder):
             else:
                 return int(o)
         return super(DecimalEncoder, self).default(o)
-
 
 def is_disconnected():
    return request.headers.get('user_id') is None
@@ -44,8 +43,6 @@ def coginto_user():
             user_email = x["Value"]
     return {"user_name": user_name,
             "user_email": user_email}
-
-
 
 def is_paid_customer(nmi):
     user_name = coginto_user()

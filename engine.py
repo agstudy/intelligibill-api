@@ -86,8 +86,6 @@ def _store_data(priced, request, res, nb_offers, ranking, upload_id,nb_retailers
     )
     copy_object(BILLS_BUCKET, f"upload/{upload_id}.pdf", BILLS_BUCKET, key_file)
 
-
-
 def _get_bests(upload_id, priced, file_name, is_business):
     try:
         res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
