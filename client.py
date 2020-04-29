@@ -40,12 +40,12 @@ def upload_bill(file_name):
             return result
 
 
+from extractor import Extractor
 
-if __name__=='__main__':
-
-    file_name = "/home/agstudy/Downloads/1284602.pdf"
-    result = upload_bill(file_name)
-    print(result)
 
 
 
+if __name__=='__main__':
+    local_file = "/home/agstudy/Downloads/mojo bill Jan 20.pdf.pdf"
+    is_bill, message = Extractor.check_bill(local_file)
+    print(is_bill)

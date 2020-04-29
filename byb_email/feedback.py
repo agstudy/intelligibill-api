@@ -156,7 +156,17 @@ def receive_feedback(comment, file_obj,user_):
         result = json.dumps(result, indent=4)
         return result, 200
 
+
+
+def contact_message(message, email):
+    user_ = {"user_name": email,     "user_email": email}
+    send_feedback(bill_file= None, message = message, user_= user_)
+    result = {"feedback": True}
+    result = json.dumps(result, indent=4)
+    return result, 200
+
 if __name__ == '__main__':
-    send_feedback(user_= {"user_name":"amine","user_email":"amine@gmail.com"},
-                  message= "amine gassem tests",
-                  bill_file=None)
+    contact_message(
+        message= "amine gassem tests",
+        email="amingassem@gmail.com"
+    )

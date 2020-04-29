@@ -92,7 +92,6 @@ def _get_bests(upload_id, priced, file_name, is_business):
         _store_data(priced, request, res, nb_offers, ranking, upload_id, nb_retailers)
         return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking)
     except Exception as ex:
-        print(ex)
         return bad_results("bad_best_offers", file=None, file_name=file_name, upload_id=upload_id)
 
 def _store_upload(upload_id, file_name, checksum, message, provider, src=None):
@@ -111,6 +110,7 @@ def _store_upload(upload_id, file_name, checksum, message, provider, src=None):
     customer = request.form.get("customer")
     if customer:
         item.update({"customer":customer})
+    print("item to store", item)
     upload_table.put_item(Item=item)
 
 def _update_upload(upload_id, customer_id, bill_id_to_date, message):
@@ -138,19 +138,22 @@ def manage_bill_upload(file_obj):
     s3_resource.Bucket(BILLS_BUCKET).upload_file(Filename=local_file, Key=key_file)
     print("key file is ", key_file)
     is_bill, message = Extractor.check_bill(local_file)
+    print("is_bill: ", is_bill)
     if is_bill: message = "success"
     provider = request.remote_addr
-    _store_upload(upload_id, file_name, checksum, message, provider=provider)
+    src = request.form.get("email")
+    _store_upload(upload_id, file_name, checksum, message, provider=provider, src = src)
     if not is_bill:
         if "scanned" in message:
             with open(local_file, "wb") as out:
                 out.write(pdf_data)
                 res, parsed = ocr_scanned(local_file)
             if not res:
-                return bad_results(parsed, file=local_file, file_name=file_name, upload_id=upload_id)
+                return bad_results(parsed, file=local_file, file_name=file_name, upload_id=upload_id), 200
         else:
-            return bad_results(message, file=local_file, file_name=file_name, upload_id=upload_id)
-    result = {"upload_id": upload_id, "message": "success", "parsed":parsed}
+            return bad_results(message, file=local_file, file_name=file_name, upload_id=upload_id), 200
+    result = {"upload_id": upload_id, "message": "success", "parsed":parsed, "code":"success"}
+    print (result)
     result = json.dumps(result)
     return result, 200
 
@@ -163,10 +166,10 @@ def get_upload_bests(upload_id, parsed= None ):
     file_name = f"/{upload_id}.pdf"
     if not parsed:
         status, parsed = _parse_upload(local_file, file_name, upload_id)
-        if not status: return parsed
+        if not status: return parsed, 200
     is_valid, error = validate(parsed)
     if not is_valid:
-        return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error)
+        return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error), 200
     priced = _running_avg(parsed)
     result = _get_bests(upload_id, priced, file_name, is_business)
     email = request.form.get("email")
@@ -207,14 +210,13 @@ def best_single(priced,retailer, upload_id=None):
         return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking), 200
     except Exception as ex:
         print(ex)
-        return bad_results(message_code= "no_single_pricing", priced=priced)
+        return bad_results(message_code= "no_single_pricing", priced=priced), 200
 
 
 def reprice_existing(parsed, is_business, upload_id = None):
     priced: dict = Bill(dict(parsed))()
     result= _get_bests(upload_id=upload_id, priced=priced,file_name= None, is_business=is_business)
     return result, 200
-
 
 
 

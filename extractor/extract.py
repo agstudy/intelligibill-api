@@ -153,7 +153,6 @@ class Extractor:
             Extractor.tet_convert(shrunk_file_path)
             os.remove(shrunk_file_path)
 
-
     @staticmethod
     def process_pdf(document_path):
 
@@ -164,8 +163,6 @@ class Extractor:
         finally:
             os.remove(document_path)
             return result
-
-
 
     @staticmethod
     def check_bill(document_path):
@@ -185,7 +182,7 @@ class Extractor:
                 for x in pdf_text:
                     if "mirn" in x.lower() or "dpi" in x.lower():
                         return False, gas_message
-                    if "nmi" in x.lower():
+                    if "nmi" in x.lower() or "meter identifier" in x.lower():
                         is_bill = True
                         break
                     if "Instalment Bill" in x:
@@ -198,8 +195,6 @@ class Extractor:
         except Exception as e:
             print(e)
             return False, f"This is not a valid pdf.\n{bad_message}"
-
-
 
 
 

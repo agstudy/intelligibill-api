@@ -70,7 +70,7 @@ prodfree:
     source-bill: BYB
     feedback_list: contact@ag-study.com
   events:
-  - function: email_byb.process_new_email
+  - function: byb_email.feeder.process_new_email
     event_source:
       arn: arn:aws:s3:::byb-emails
       events:
@@ -101,7 +101,7 @@ api:
     upload_table: upload_prod_free
     bills-bucket: beatyourbill-bucket
     stripe.api_key: stripe_key
-    coupon: "SOLAR_ANALYTICS_STUFF"
+    coupon: "VOYANCE2020"
     source-bill: BYB
     switch-bucket: byb-markintell
     feedback_list : contact@ag-study.com, bruce.mountain@cmeaustralia.com.au

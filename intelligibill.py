@@ -37,20 +37,18 @@ def bill_page():
     page = request.args.get('page')
     return send_bill_page(bill_url=bill_url, page = page, user_id=user_id())
 
-
 @app.route('/bill/pdf', methods=['GET'])
 def bill_pdf():
     bill_url = request.args.get('bill_url')
     return send_bill_pdf(bill_url=bill_url, user_id=user_id())
 
-
 @app.route("/bests", methods=["POST"])
 def bests_service():
     file_obj = request.files.get("pdf")
-    result, statut = manage_bill_upload(file_obj)
-    if statut == 200:
+    result ,statut = manage_bill_upload(file_obj)
+    if statut==200 and json.loads(result)["code"]=="success":
         result = json.loads(result)
-        result, statut = get_upload_bests(result["upload_id"], result["parsed"])
+        result ,statut = get_upload_bests(result["upload_id"], result["parsed"])
     return result, statut
 
 @app.route("/bests/single", methods=["POST"])
@@ -91,20 +89,17 @@ def feedback_service():
     result, statut = receive_feedback(comment=comment, file_obj= file_obj, user_= user_)
     return result, statut
 
-
 @app.route("/current_nmi", methods=["GET"])
 def current_nmi_service():
     customer_id = user_id()
     current = current_nmi(customer_id)
     return jsonify(current), 200
 
-
 @app.route("/nmis", methods=["GET"])
 def nmis_service():
     customer_id = user_id()
     res = nmis(customer_id)
     return jsonify(res), 200
-
 
 @app.route("/payment/charge", methods=["POST"])
 def charge_client_service():
@@ -115,7 +110,6 @@ def charge_client_service():
     charge = charge_client(stripe_token=token, nmi=nmi, user_name=user_["user_name"], user_email=user_["user_email"])
     return jsonify(charge), 200
 
-
 @app.route("/payment/invoice", methods=["POST"])
 def invoice_client_service():
     params = request.get_json()
@@ -125,7 +119,6 @@ def invoice_client_service():
     invoice = invoice_client(token, nmi, user_["user_email"])
     return jsonify(invoice), 200
 
-
 @app.route("/payment/coupon", methods=["POST"])
 def coupon_client_service():
     params = request.get_json()
@@ -134,7 +127,6 @@ def coupon_client_service():
     user_ = coginto_user()
     res = coupon_client(nmi=nmi, coupon=coupon, user_name=user_["user_name"], user_email=user_["user_email"])
     return jsonify(res), 200
-
 
 @app.route('/payment/is_paid', methods=['GET'])
 def is_paid_service():

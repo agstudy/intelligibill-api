@@ -10,11 +10,11 @@ import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from botocore.exceptions import ClientError
-from byb_email.send_bill import send_ses_bill
+from byb_email.feedback import send_ses_bill
 from tempfile import NamedTemporaryFile
 from shared import byb_temporary_user
 import re
-
+import os 
 
 
 s3_resource = boto3.resource('s3')
@@ -50,7 +50,7 @@ def populateResult(el):
                                 <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                     <tr>
                                         <td style="text-align: left; width: 70px;">
-                                            <img width="60" height="auto" src="https://www.beatyourbill.com.au/assets/retailers/{el.retailer_img}.png" alt="{el.retailer_img}" style="height:auto">
+                                            <img width="60" height="auto" src="https://app.beatyourbill.com.au/assets/retailers/{el.retailer_img}.png" alt="{el.retailer_img}" style="height:auto">
                                         </td>
                                         <td style="width: 120px; font-size: 15px;">
                                             <table width="100%" border="0" cellspacing="0" cellpadding="0">
@@ -129,6 +129,8 @@ def populateHeader(saving, text=None):
 def create_email(r, user_email, force_change):
     ei = EmailInput()
 
+    EMILAT_TEMPLATE = os.path.join(os.path.dirname(__file__), "email.html")
+
     ei.username = r["bill"]["name"]
     ei.cta = "Join Now and Save!"
     if r["bests"]:
@@ -146,7 +148,7 @@ def create_email(r, user_email, force_change):
 ##                sr.retailer_name.replace("etalier", "etailer")
 
             ei.saving_results.append(sr)
-        with open("email.html") as template:
+        with open(EMILAT_TEMPLATE) as template:
             txt = template.read()
             soup = BeautifulSoup(txt, 'html.parser')
             header_text = soup.find(class_="header_text")
@@ -159,7 +161,7 @@ def create_email(r, user_email, force_change):
         user_name.append(BeautifulSoup(ei.username, "html.parser"))
         cta_message = soup.find(class_="cta_message")
         if force_change:
-            url_= f"https://www.beatyourbill.com.au/login?user={user_email}&pwd=passwordchange"
+            url_= f"https://app.beatyourbill.com.au/login?user={user_email}&pwd=passwordchange"
             cta_message["href"] = url_
         cta_message.clear()
         cta_message.append(BeautifulSoup(ei.cta, "html.parser"))

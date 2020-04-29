@@ -5,6 +5,8 @@ from flask_cors import CORS
 import boto3
 from flask_request_id_header.middleware import RequestID
 from engine import manage_bill_upload, get_upload_bests, retrive_bests_by_id
+from byb_email.feedback import contact_message
+
 app = Flask(__name__)
 app.config['REQUEST_ID_UNIQUE_VALUE_PREFIX'] = 'open-'
 s3_resource = boto3.resource('s3')
@@ -35,10 +37,15 @@ def retrieve_upload_bests():
 def bests():
     file_obj = request.files.get("pdf")
     result ,statut = manage_bill_upload(file_obj)
-    if statut==200:
+    if statut==200 and json.loads(result)["code"]=="success":
         result = json.loads(result)
         result ,statut = get_upload_bests(result["upload_id"], result["parsed"])
     return result, statut
 
-
+@app.route("/contact", methods=["POST"])
+def contact_service():
+    message = request.form.get("message")
+    email = request.form.get("email")
+    result, statut = contact_message(message=message, email= email)
+    return result, statut
 

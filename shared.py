@@ -220,7 +220,7 @@ def byb_temporary_user(user_email):
             },
             {
                 'Name': 'email_verified',
-                'Value': True
+                'Value': 'true'
             }
         ]
     )
@@ -248,6 +248,10 @@ def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=No
                             If the problem is on our side, we will fix it and let you know 
                             if you have signed up with us
                           """,
+            "trunked_seasonal_flexible": """
+            Sorry we can not price your bill because we do not know what you are being charged for electricity in peak periods. 
+            Can you please upload your next bill and we will check it then.
+            """,
             "no_single_pricing":"pricing problem"
         }
         return switcher.get(argument, message_code)
@@ -260,16 +264,16 @@ def bad_results(message_code, priced={}, file=None, file_name=None, upload_id=No
     elif file:
         s3_resource.Bucket(BAD_BILLS_BUCKET).upload_file(Filename=file, Key=file_name)
         send_ses_bill(bill_file=file, user_="anonymous", user_message=message)
-
-    return jsonify(
-        {
+    result = {
+            'code': message_code,
             'upload_id': upload_id,
             'bests': [],
             'evaluated': -1,
             'bill': priced,
             "message": message
-        }), 200
-
+        }
+    result = json.dumps(result, indent=4, cls=DecimalEncoder)
+    return result
 def get_stripe_key(key):
     ssm = boto3.client('ssm', region_name='us-east-1')
     parameter = ssm.get_parameter(Name=key)
