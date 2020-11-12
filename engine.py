@@ -7,6 +7,7 @@ from datetime import datetime
 from smart_meter import get_history, RunAvg
 from shared import  bill_id, populate_bill_users, populate_bests_offers, copy_object, \
     _create_best_result, bad_results,  bill_file_name, user_id
+from shared import DecimalEncoder
 
 from  byb_validation.validate import validate
 from  miswitch_services import _process_upload_miswitch, ocr_scanned
@@ -92,6 +93,7 @@ def _get_bests(upload_id, priced, file_name, is_business):
         _store_data(priced, request, res, nb_offers, ranking, upload_id, nb_retailers)
         return _create_best_result(res, upload_id, nb_offers, nb_retailers, priced, ranking)
     except Exception as ex:
+        print("problem is ", ex)
         return bad_results("bad_best_offers", file=None, file_name=file_name, upload_id=upload_id)
 
 def _store_upload(upload_id, file_name, checksum, message, provider, src=None):
@@ -153,7 +155,6 @@ def manage_bill_upload(file_obj):
         else:
             return bad_results(message, file=local_file, file_name=file_name, upload_id=upload_id), 200
     result = {"upload_id": upload_id, "message": "success", "parsed":parsed, "code":"success"}
-    print (result)
     result = json.dumps(result)
     return result, 200
 
@@ -166,15 +167,63 @@ def get_upload_bests(upload_id, parsed= None ):
     file_name = f"/{upload_id}.pdf"
     if not parsed:
         status, parsed = _parse_upload(local_file, file_name, upload_id)
-        if not status: return parsed, 200
+        if not status:
+            print("parsed" , parsed)
+            return parsed, 200
     is_valid, error = validate(parsed)
+
     if not is_valid:
         return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error), 200
-    priced = _running_avg(parsed)
+    ## priced = _running_avg(parsed)
+    priced = Bill(dict(parsed))()
     result = _get_bests(upload_id, priced, file_name, is_business)
     email = request.form.get("email")
     _process_upload_miswitch(upload_id, email)
     return result, 200
+
+
+def admin_bests(upload_id):
+    local_file = f"/tmp/{upload_id}.pdf"
+    key_file = f"upload/{upload_id}.pdf"
+    s3_resource.Bucket(BILLS_BUCKET).download_file(Filename=local_file, Key=key_file)
+    is_business = request.form.get("is_business")
+    is_business = True if is_business == "yes" else False
+    file_name = f"/{upload_id}.pdf"
+    status, parsed = _parse_upload(local_file, file_name, upload_id)
+    if not status:
+        print("parsed" , parsed)
+        return parsed, 200
+    is_valid, error = validate(parsed)
+    if not is_valid:
+        return bad_results("no_parsing", file=local_file, file_name=file_name, upload_id=upload_id, error = error), 200
+    priced = Bill(dict(parsed))()
+    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+    result = {
+        "upload_id": upload_id,
+        "nb_offers": nb_offers,
+        "ranking": ranking,
+        "nb_retailers": nb_retailers,
+        "bests": res,
+        "priced": priced}
+    result = json.dumps(result, indent=4, cls=DecimalEncoder)
+    return result
+
+
+def admin_bests_reprice(parsed, is_business, upload_id = None):
+    is_valid, error = validate(parsed)
+    if not is_valid:
+        return {"bad bill"}, 200
+    priced = Bill(dict(parsed))()
+    res, nb_offers, nb_retailers, ranking = get_bests(priced, "", n=-1, is_business=is_business)
+    result = {
+        "upload_id": upload_id,
+        "nb_offers": nb_offers,
+        "ranking": ranking,
+        "nb_retailers": nb_retailers,
+        "bests": res,
+        "priced": priced}
+    result = json.dumps(result, indent=4, cls=DecimalEncoder)
+    return result
 
 def retrive_bests_by_id(upload_id):
 

@@ -34,6 +34,7 @@ def get_subprocess_output(cmdline, redirect_stderr=True, display_output_on_excep
 
 LAMBDA_TASK_ROOT = os.environ.get('LAMBDA_TASK_ROOT', os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(LAMBDA_TASK_ROOT,'extractor', 'bin')
+
 LIB_DIR = os.path.join(LAMBDA_TASK_ROOT,'extractor', 'lib')
 LD_LIBRARY_PATH = os.path.join(LIB_DIR, 'pdftotext')
 
@@ -159,6 +160,7 @@ class Extractor:
         try:
             result = Extractor.extract(document_path)
         except Exception as e:
+
             result = dict(success=False, reason=str(e))
         finally:
             os.remove(document_path)
@@ -169,8 +171,8 @@ class Extractor:
 
         is_bill = False
         embedded = ["resiembeddednetwork",'ocenergy.com.au','winconnect.com.au']
-        bad_message = "Sorry we could not automatically read your bill.\n Can you please make sure you have an original PDF and then try again."
-        gas_message = "Sorry, we do not yet cover gas bills.\n Can you please make sure you have an original electricity PDF and then try again."
+        bad_message = "Sorry we could not automatically read your bill.\nCan you please make sure you have an original PDF and then try again."
+        gas_message = "Sorry, we do not yet cover gas bills.\nCan you please make sure you have an original electricity PDF and then try again."
         installment_message = """This is an installment bill that do not contain your consumption profile.\n
                               Can you please make sure you have an electricity bill with consumption rates and volumes and then try again."""
 
@@ -190,7 +192,8 @@ class Extractor:
                     if any(y in x.lower().replace(" ","") for y in embedded):
                         is_bill =True
                         break
-            if not is_bill: return is_bill, f"This is not a valid bill.\n{bad_message}"
+            if not is_bill:
+                return is_bill, f"This is not a valid bill.\n{bad_message}"
             return is_bill,x
         except Exception as e:
             print(e)
@@ -198,6 +201,15 @@ class Extractor:
 
 
 
+
+
+
+if __name__ =="__main__":
+    file_name = "/home/amine/Downloads/bougeois_elysain_bill.pdf"
+
+    flag, res =  Extractor.check_bill(file_name)
+
+    print(flag, res)
 
 
 

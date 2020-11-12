@@ -44,6 +44,7 @@ free:
     bests_offers_table: bests_offers
     users_paid_table: paid_users
     upload_table: upload_free
+    offers_table: offers
     bills-bucket: myswitch-bills-bucket
     switch-bucket: switch-markintell
     feedback_list: contact@ag-study.com
@@ -55,8 +56,7 @@ prodfree:
   profile_name: default
   project_name: intelligibill
   runtime: python3.6
-  s3_bucket: intelligibill-dev
-  domain: prodfree.beatyourbill.com.au
+  s3_bucket: intelligibill-de  domain: prodfree.beatyourbill.com.au
   log_level: ERROR
   certificate_arn: arn:aws:acm:us-east-1:825327973641:certificate/14fc8b5c-1e40-44ce-9617-f531e5c2ce82
   cors: yes

@@ -1,7 +1,7 @@
 _validationIntervals = dict(
     supply_rate= [0, 5],
     flat_rate= [0.1, 0.55],
-    b1_rate= [0.1, 0.55],
+    b1_rate= [0, 0.55],
     b2_rate= [0.1, 0.55],
     b3_rate= [0.1, 0.55],
     balance_rate= [0.1, 0.55],

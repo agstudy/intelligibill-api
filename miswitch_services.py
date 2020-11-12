@@ -4,10 +4,10 @@ import boto3
 from cts import SOURCE_BILL, BILLS_BUCKET
 
 s3_resource = boto3.resource('s3')
-
+backend_url = "https://admin.beatyourbill.com.au"
 def ocr_scanned(pdf_file):
     try:
-        url_miswitch = "https://switch.markintell.com.au/api/pdf/scanned-bill"
+        url_miswitch = f"{backend_url}/api/pdf/scanned-bill"
         with open(pdf_file, "rb") as f:
             r = requests.post(url_miswitch, files={"pdf": f})
             if r.status_code == 200:
@@ -31,13 +31,13 @@ def _process_upload_miswitch(upload_id, email = None ):
     file_name = f"/{upload_id}.pdf"
     try:
         with open(local_file, "rb") as f:
-            url_miswitch = "https://switch.markintell.com.au/api/pdf/pdf-to-json"
+            url_miswitch = f"{backend_url}/api/pdf/pdf-to-json"
             r = requests.post(url_miswitch, files={'pdf': f},
                               data={"source": SOURCE_BILL,
                                     "file_name": file_name,
                                     "user_name": user_name,
                                     "user_email": user_email
                                     })
-            print("reponse miswitch", r)
+            print("response miswitch", r)
     except Exception as ex:
         print(ex)

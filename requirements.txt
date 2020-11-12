@@ -1,8 +1,9 @@
 lxml
 -e git+git@github.com:BruceMount/bill-parser.git@zappa#egg=pdf_parse
--e git@github.com:BruceMount/smart_meter.git@master#egg=smart_meter
+-e git+git@github.com:BruceMount/smart_meter.git@master#egg=smart_meter
 -e git+git@github.com:BruceMount/bill_pricing.git@1.6.5#egg=bill_pricing
 -e git+git@github.com:BruceMount/best_offer.git@zappa#egg=best_offer
 flask_cors
 jose
+stripe
 
